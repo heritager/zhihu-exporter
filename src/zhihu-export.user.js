@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         知乎内容导出（Obsidian优化版）
-// @namespace    https://github.com/zhihu-exporter
-// @version      3.0.0
+// @namespace    https://github.com/heritager/zhihu-exporter
+// @version      3.0.1
 // @description  支持导出答主全部内容 + 问题下所有回答，生成Obsidian友好的Markdown文档
 // @author       ZhihuExporter
 // @license      MIT
