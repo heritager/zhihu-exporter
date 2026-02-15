@@ -23,7 +23,7 @@
 1. 安装 Tampermonkey 或 Violentmonkey
 2. 打开下方脚本链接并安装
 
-`https://raw.githubusercontent.com/<yourname>/zhihu-exporter/main/src/zhihu-export.user.js`
+`https://raw.githubusercontent.com/heritager/zhihu-exporter/main/src/zhihu-export.user.js`
 
 ## Usage
 
@@ -60,7 +60,7 @@ zhihu-exporter/
 ## Development
 
 ```powershell
-git clone https://github.com/<yourname>/zhihu-exporter.git
+git clone https://github.com/heritager/zhihu-exporter.git
 cd zhihu-exporter
 ```
 
