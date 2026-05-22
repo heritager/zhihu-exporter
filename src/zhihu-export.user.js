@@ -19,7 +19,9 @@
         linkStyle: 'obsidian',     // 'obsidian' | 'standard'
         addFrontmatter: true,
         useCallout: true,
-        requestDelay: 350
+        requestDelay: 350,
+        maxRetries: 3,             // 最大重试次数
+        retryDelay: 1500           // 重试间隔（毫秒）
     };
 
     // ======================== 主对象 ========================
@@ -184,6 +186,41 @@
             linkDiv.appendChild(createLinkRadio('standard', '通用 Markdown', false));
             panel.appendChild(linkDiv);
 
+            // ---- 偏移/数量设置 ----
+            const offsetDiv = document.createElement('div');
+            Object.assign(offsetDiv.style, { padding: '12px 20px', borderBottom: '1px solid #f0f0f0' });
+            const offsetLabel = document.createElement('div');
+            offsetLabel.textContent = '下载范围（可选）';
+            Object.assign(offsetLabel.style, { fontSize: '13px', color: '#666', marginBottom: '8px' });
+            offsetDiv.appendChild(offsetLabel);
+
+            const offsetRow = document.createElement('div');
+            Object.assign(offsetRow.style, { display: 'flex', gap: '12px', alignItems: 'center' });
+
+            const createNumInput = (id, label, value, min) => {
+                const wrap = document.createElement('div');
+                Object.assign(wrap.style, { display: 'flex', alignItems: 'center', gap: '4px' });
+                const lbl = document.createElement('span');
+                lbl.textContent = label;
+                Object.assign(lbl.style, { fontSize: '12px', color: '#666' });
+                const inp = document.createElement('input');
+                inp.type = 'number'; inp.id = id; inp.value = value; inp.min = min || '0';
+                Object.assign(inp.style, { width: '80px', padding: '4px 8px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '13px' });
+                wrap.appendChild(lbl); wrap.appendChild(inp);
+                return wrap;
+            };
+
+            offsetRow.appendChild(createNumInput('exp-offset', '起始偏移', '0', '0'));
+            offsetRow.appendChild(createNumInput('exp-limit', '每页数量', '20', '1'));
+            offsetDiv.appendChild(offsetRow);
+
+            const offsetHint = document.createElement('div');
+            offsetHint.textContent = 'offset=0 从头开始，limit 建议 5~20';
+            Object.assign(offsetHint.style, { fontSize: '11px', color: '#999', marginTop: '6px' });
+            offsetDiv.appendChild(offsetHint);
+
+            panel.appendChild(offsetDiv);
+
             // ---- 进度区 ----
             const progressDiv = document.createElement('div');
             Object.assign(progressDiv.style, { padding: '12px 20px', display: 'none' });
@@ -306,6 +343,10 @@
             const expPins = document.getElementById('exp-pins').checked;
             CONFIG.linkStyle = (document.querySelector('input[name="link-style"]:checked') || {}).value || 'obsidian';
 
+            // 读取手动 offset/limit
+            const startOffset = parseInt(document.getElementById('exp-offset')?.value) || 0;
+            const batchLimit = parseInt(document.getElementById('exp-limit')?.value) || 20;
+
             if (!expAnswers && !expArticles && !expPins) {
                 alert('请至少选择一种内容类型！'); return;
             }
@@ -322,67 +363,133 @@
                 const userInfo = await userResp.json();
                 const authorName = userInfo.name || this.urlToken;
 
-                const totalTasks =
-                    (expAnswers ? (userInfo.answer_count || 0) : 0) +
-                    (expArticles ? (userInfo.articles_count || 0) : 0) +
-                    (expPins ? (userInfo.pins_count || 0) : 0);
-                let processed = 0;
+                const allFailedOffsets = []; // 收集所有失败的 offset 信息
 
-                const allAnswers = [], allArticles = [], allPins = [];
-
-                // ---- 回答 ----
+                // ---- 导出回答（分批输出文件） ----
                 if (expAnswers && !this.aborted) {
-                    const total = userInfo.answer_count || '?';
-                    this.setProgress(0, '正在导出回答...', '0 / ' + total);
-                    const items = await this.fetchAllPaged(
-                        '/api/v4/members/' + this.urlToken + '/answers',
-                        { include: 'data[*].content,voteup_count,created_time,updated_time,comment_count,question.title', limit: 20, sort_by: 'created' },
-                        (c) => { processed++; this.setProgress(Math.min(processed/totalTasks*100,100).toFixed(1), '正在导出回答...', c+' / '+total); }
+                    const answerTotal = userInfo.answer_count || 0;
+                    const totalDisplay = answerTotal > 0 ? answerTotal : '?';
+                    this.setProgress(0, '正在导出回答...', '0 / ' + totalDisplay);
+                    const answerParams = { include: 'data[*].content,voteup_count,created_time,updated_time,comment_count,question.title', limit: batchLimit, sort_by: 'created' };
+                    const answerBase = '/api/v4/members/' + this.urlToken + '/answers';
+
+                    const result = await this.fetchAllPaged(
+                        answerBase, answerParams,
+                        (c) => { this.setProgress(Math.min(c / Math.max(answerTotal, 1) * 33, 33).toFixed(1), '正在导出回答...', c + ' / ' + totalDisplay); },
+                        (batch, batchIdx) => {
+                            const firstDate = batch.length > 0 ? this.formatDate(batch[0].created_time) : '未知';
+                            const startNum = batchIdx * batchLimit + 1;
+                            const endNum = startNum + batch.length - 1;
+                            const md = this.genPersonAnswerBatchMarkdown(authorName, userInfo, batch, batchIdx, startNum, endNum);
+                            const filename = this.safeFilename(authorName + '_回答_' + firstDate + '_' + startNum + '-' + endNum);
+                            this.downloadFile(md, filename);
+                        },
+                        startOffset
                     );
-                    allAnswers.push(...items);
-                    this.stats.answers = allAnswers.length;
+                    this.stats.answers = result.items.length;
+                    result.failedOffsets.forEach(fo => allFailedOffsets.push({ type: '回答', baseUrl: answerBase, params: answerParams, offset: fo.offset, limit: fo.limit }));
                 }
 
-                // ---- 文章 ----
+                // ---- 导出文章（分批输出文件） ----
                 if (expArticles && !this.aborted) {
-                    const total = userInfo.articles_count || '?';
-                    this.setProgress((processed/totalTasks*100).toFixed(1), '正在导出文章...', '0 / '+total);
-                    const items = await this.fetchAllPaged(
-                        '/api/v4/members/' + this.urlToken + '/articles',
-                        { include: 'data[*].content,voteup_count,created,updated,comment_count,title', limit: 20, sort_by: 'created' },
-                        (c) => { processed++; this.setProgress(Math.min(processed/totalTasks*100,100).toFixed(1), '正在导出文章...', c+' / '+total); }
+                    const articleTotal = userInfo.articles_count || 0;
+                    const totalDisplay = articleTotal > 0 ? articleTotal : '?';
+                    this.setProgress(33, '正在导出文章...', '0 / ' + totalDisplay);
+                    const articleParams = { include: 'data[*].content,voteup_count,created,updated,comment_count,title', limit: batchLimit, sort_by: 'created' };
+                    const articleBase = '/api/v4/members/' + this.urlToken + '/articles';
+
+                    const result = await this.fetchAllPaged(
+                        articleBase, articleParams,
+                        (c) => { this.setProgress(33 + Math.min(c / Math.max(articleTotal, 1) * 33, 33).toFixed(1), '正在导出文章...', c + ' / ' + totalDisplay); },
+                        (batch, batchIdx) => {
+                            const firstDate = batch.length > 0 ? this.formatDate(batch[0].created) : '未知';
+                            const startNum = batchIdx * batchLimit + 1;
+                            const endNum = startNum + batch.length - 1;
+                            const md = this.genPersonArticleBatchMarkdown(authorName, userInfo, batch, batchIdx, startNum, endNum);
+                            const filename = this.safeFilename(authorName + '_文章_' + firstDate + '_' + startNum + '-' + endNum);
+                            this.downloadFile(md, filename);
+                        },
+                        startOffset
                     );
-                    allArticles.push(...items);
-                    this.stats.articles = allArticles.length;
+                    this.stats.articles = result.items.length;
+                    result.failedOffsets.forEach(fo => allFailedOffsets.push({ type: '文章', baseUrl: articleBase, params: articleParams, offset: fo.offset, limit: fo.limit }));
                 }
 
-                // ---- 想法 ----
+                // ---- 导出想法（分批输出文件） ----
                 if (expPins && !this.aborted) {
-                    const total = userInfo.pins_count || '?';
-                    this.setProgress((processed/totalTasks*100).toFixed(1), '正在导出想法...', '0 / '+total);
-                    const items = await this.fetchAllPaged(
-                        '/api/v4/members/' + this.urlToken + '/pins',
-                        { limit: 20 },
-                        (c) => { processed++; this.setProgress(Math.min(processed/totalTasks*100,100).toFixed(1), '正在导出想法...', c+' / '+total); }
+                    const pinTotal = userInfo.pins_count || 0;
+                    const totalDisplay = pinTotal > 0 ? pinTotal : '?';
+                    this.setProgress(66, '正在导出想法...', '0 / ' + totalDisplay);
+                    const pinParams = { limit: batchLimit };
+                    const pinBase = '/api/v4/members/' + this.urlToken + '/pins';
+
+                    const result = await this.fetchAllPaged(
+                        pinBase, pinParams,
+                        (c) => { this.setProgress(66 + Math.min(c / Math.max(pinTotal, 1) * 30, 30).toFixed(1), '正在导出想法...', c + ' / ' + totalDisplay); },
+                        (batch, batchIdx) => {
+                            const firstDate = batch.length > 0 ? this.formatDate(batch[0].created) : '未知';
+                            const startNum = batchIdx * batchLimit + 1;
+                            const endNum = startNum + batch.length - 1;
+                            const md = this.genPersonPinBatchMarkdown(authorName, userInfo, batch, batchIdx, startNum, endNum);
+                            const filename = this.safeFilename(authorName + '_想法_' + firstDate + '_' + startNum + '-' + endNum);
+                            this.downloadFile(md, filename);
+                        },
+                        startOffset
                     );
-                    allPins.push(...items);
-                    this.stats.pins = allPins.length;
+                    this.stats.pins = result.items.length;
+                    result.failedOffsets.forEach(fo => allFailedOffsets.push({ type: '想法', baseUrl: pinBase, params: pinParams, offset: fo.offset, limit: fo.limit }));
                 }
 
                 if (this.aborted) { this.setProgress(0, '导出已取消', ''); this.resetUI(2000); return; }
 
-                this.setProgress(98, '正在生成 Markdown...', '');
-                const md = this.genPersonMarkdown(authorName, userInfo, allAnswers, allArticles, allPins);
-                this.downloadFile(md, authorName + '_内容合集');
+                // ---- 重试失败批次 ----
+                if (allFailedOffsets.length > 0 && !this.aborted) {
+                    this.setProgress(96, '正在重试失败的批次...', allFailedOffsets.length + ' 个待重试');
+                    const stillFailed = [];
 
-                this.setProgress(100, '✅ 导出完成！',
-                    '回答: '+this.stats.answers+' | 文章: '+this.stats.articles+' | 想法: '+this.stats.pins);
+                    for (const fo of allFailedOffsets) {
+                        if (this.aborted) break;
+                        const retryResult = await this.retryFailedBatches(
+                            fo.baseUrl, fo.params, [{ offset: fo.offset, limit: fo.limit }],
+                            null,
+                            (batch) => {
+                                const firstDate = batch.length > 0 ? this.formatDate(batch[0].created_time || batch[0].created) : '未知';
+                                const md = fo.type === '回答'
+                                    ? this.genPersonAnswerBatchMarkdown(authorName, userInfo, batch, -1, fo.offset + 1, fo.offset + batch.length)
+                                    : fo.type === '文章'
+                                        ? this.genPersonArticleBatchMarkdown(authorName, userInfo, batch, -1, fo.offset + 1, fo.offset + batch.length)
+                                        : this.genPersonPinBatchMarkdown(authorName, userInfo, batch, -1, fo.offset + 1, fo.offset + batch.length);
+                                const filename = this.safeFilename(authorName + '_' + fo.type + '_补_' + firstDate + '_' + (fo.offset + 1) + '-' + (fo.offset + batch.length));
+                                this.downloadFile(md, filename);
+                            }
+                        );
+                        if (retryResult.stillFailed.length > 0) {
+                            stillFailed.push(fo);
+                        } else {
+                            const key = fo.type === '回答' ? 'answers' : fo.type === '文章' ? 'articles' : 'pins';
+                            this.stats[key] += retryResult.items.length;
+                        }
+                    }
+
+                    if (stillFailed.length > 0) {
+                        console.warn('以下批次最终失败:', stillFailed.map(f => f.type + ' offset=' + f.offset).join(', '));
+                        this.setProgress(100, '⚠️ 部分完成（' + stillFailed.length + ' 批失败）',
+                            '回答: ' + this.stats.answers + ' | 文章: ' + this.stats.articles + ' | 想法: ' + this.stats.pins +
+                            ' | 失败: ' + stillFailed.map(f => f.type + '#' + f.offset).join(', '));
+                    } else {
+                        this.setProgress(100, '✅ 导出完成！',
+                            '回答: ' + this.stats.answers + ' | 文章: ' + this.stats.articles + ' | 想法: ' + this.stats.pins);
+                    }
+                } else {
+                    this.setProgress(100, '✅ 导出完成！',
+                        '回答: ' + this.stats.answers + ' | 文章: ' + this.stats.articles + ' | 想法: ' + this.stats.pins);
+                }
 
             } catch (err) {
                 console.error('导出失败:', err);
                 this.setProgress(0, '❌ 导出失败: ' + err.message, '');
             } finally {
-                this.resetUI(5000);
+                this.resetUI(8000);
             }
         },
 
@@ -395,6 +502,10 @@
             const sortBy = sortEl ? sortEl.value : 'default';
             const includeDetail = document.getElementById('exp-q-detail') ? document.getElementById('exp-q-detail').checked : true;
             CONFIG.linkStyle = (document.querySelector('input[name="link-style"]:checked') || {}).value || 'obsidian';
+
+            // 读取手动 offset/limit
+            const startOffset = parseInt(document.getElementById('exp-offset')?.value) || 0;
+            const batchLimit = parseInt(document.getElementById('exp-limit')?.value) || 20;
 
             this.lockUI();
             this.setProgress(0, '正在获取问题信息...', '');
@@ -412,77 +523,488 @@
 
                 this.setProgress(5, '正在导出回答...', '0 / ' + totalAnswers);
 
-                // 获取所有回答
-                const allAnswers = await this.fetchAllPaged(
-                    '/api/v4/questions/' + this.questionId + '/answers',
-                    {
-                        include: 'data[*].content,voteup_count,created_time,updated_time,comment_count,author.name,author.headline,author.url_token',
-                        limit: 20,
-                        sort_by: sortBy
-                    },
+                // 获取所有回答（分批输出文件）
+                const answerParams = {
+                    include: 'data[*].content,voteup_count,created_time,updated_time,comment_count,author.name,author.headline,author.url_token',
+                    limit: batchLimit,
+                    sort_by: sortBy
+                };
+                const answerBase = '/api/v4/questions/' + this.questionId + '/answers';
+
+                const result = await this.fetchAllPaged(
+                    answerBase, answerParams,
                     (count) => {
-                        const pct = totalAnswers > 0 ? Math.min(5 + (count / totalAnswers) * 90, 95) : 50;
+                        const pct = totalAnswers > 0 ? Math.min(5 + (count / totalAnswers) * 85, 90) : 50;
                         this.setProgress(pct.toFixed(1), '正在导出回答...', count + ' / ' + totalAnswers);
-                    }
+                    },
+                    (batch, batchIdx) => {
+                        const firstDate = batch.length > 0 ? this.formatDate(batch[0].created_time) : '未知';
+                        const startNum = batchIdx * batchLimit + 1;
+                        const endNum = startNum + batch.length - 1;
+                        const md = this.genQuestionAnswerBatchMarkdown(qInfo, batch, batchIdx, startNum, endNum, includeDetail, sortBy);
+                        const filename = this.safeFilename(qTitle + '_回答_' + firstDate + '_' + startNum + '-' + endNum);
+                        this.downloadFile(md, filename);
+                    },
+                    startOffset
                 );
-                this.stats.answers = allAnswers.length;
+                this.stats.answers = result.items.length;
 
                 if (this.aborted) { this.setProgress(0, '导出已取消', ''); this.resetUI(2000); return; }
 
-                this.setProgress(96, '正在生成 Markdown...', '');
-                const md = this.genQuestionMarkdown(qInfo, allAnswers, includeDetail, sortBy);
-                this.downloadFile(md, qTitle + '_' + allAnswers.length + '个回答');
+                // ---- 重试失败批次 ----
+                if (result.failedOffsets.length > 0 && !this.aborted) {
+                    this.setProgress(92, '正在重试失败的批次...', result.failedOffsets.length + ' 个待重试');
 
-                this.setProgress(100, '✅ 导出完成！', '共 ' + allAnswers.length + ' 个回答');
+                    const retryResult = await this.retryFailedBatches(
+                        answerBase, answerParams, result.failedOffsets,
+                        null,
+                        (batch) => {
+                            const firstDate = batch.length > 0 ? this.formatDate(batch[0].created_time) : '未知';
+                            const md = this.genQuestionAnswerBatchMarkdown(qInfo, batch, -1, 0, batch.length, includeDetail, sortBy);
+                            const filename = this.safeFilename(qTitle + '_回答_补_' + firstDate + '_' + batch.length);
+                            this.downloadFile(md, filename);
+                        }
+                    );
+
+                    this.stats.answers += retryResult.items.length;
+
+                    if (retryResult.stillFailed.length > 0) {
+                        console.warn('以下批次最终失败:', retryResult.stillFailed.map(f => 'offset=' + f.offset).join(', '));
+                        this.setProgress(100, '⚠️ 部分完成（' + retryResult.stillFailed.length + ' 批失败）',
+                            '共导出 ' + this.stats.answers + ' 个回答 | 失败 offset: ' + retryResult.stillFailed.map(f => f.offset).join(', '));
+                    } else {
+                        this.setProgress(100, '✅ 导出完成！', '共 ' + this.stats.answers + ' 个回答');
+                    }
+                } else {
+                    this.setProgress(100, '✅ 导出完成！', '共 ' + this.stats.answers + ' 个回答');
+                }
 
             } catch (err) {
                 console.error('导出失败:', err);
                 this.setProgress(0, '❌ 导出失败: ' + err.message, '');
             } finally {
-                this.resetUI(5000);
+                this.resetUI(8000);
             }
         },
 
-        // ==================== API 分页请求 ====================
-        fetchAllPaged: async function(baseUrl, params, onItem) {
+        // ==================== API 分页请求（支持重试、断点续传、分批回调） ====================
+        fetchAllPaged: async function(baseUrl, params, onItem, onBatch, startOffset) {
             const allItems = [];
-            let offset = 0;
+            const failedOffsets = [];
+            let offset = (startOffset !== undefined) ? startOffset : 0;
             const limit = params.limit || 20;
             let count = 0;
+            let batchIndex = 0;
+            let reachedEnd = false;
 
-            while (true) {
+            while (!reachedEnd) {
                 if (this.aborted) break;
 
-                const urlParams = new URLSearchParams({ ...params, offset: String(offset), limit: String(limit) });
-                const resp = await fetch(baseUrl + '?' + urlParams.toString());
+                let batchData = null;
+                let success = false;
 
-                if (!resp.ok) {
-                    if (resp.status === 429) {
-                        console.warn('限流，等待 3 秒...');
-                        await new Promise(r => setTimeout(r, 3000));
-                        continue;
+                // ---- 最多重试 maxRetries 次（429 限流不占用重试次数） ----
+                let attempt = 0;
+                while (attempt <= CONFIG.maxRetries) {
+                    try {
+                        const urlParams = new URLSearchParams({ ...params, offset: String(offset), limit: String(limit) });
+                        const resp = await fetch(baseUrl + '?' + urlParams.toString());
+
+                        if (!resp.ok) {
+                            if (resp.status === 429) {
+                                console.warn('限流，等待 5 秒...');
+                                await new Promise(r => setTimeout(r, 5000));
+                                continue; // 限流不占用重试次数，不递增 attempt
+                            }
+                            throw new Error('HTTP ' + resp.status);
+                        }
+
+                        batchData = await resp.json();
+                        success = true;
+                        break;
+                    } catch (err) {
+                        console.warn('请求失败 offset=' + offset + ', 第' + (attempt + 1) + '次尝试: ' + err.message);
+                        attempt++;
+                        if (attempt <= CONFIG.maxRetries) {
+                            await new Promise(r => setTimeout(r, CONFIG.retryDelay * attempt));
+                        }
                     }
-                    console.warn('请求失败 offset=' + offset + ' status=' + resp.status);
+                }
+
+                if (!success || !batchData) {
+                    console.warn('offset=' + offset + ' 最终失败，记录待末尾重试');
+                    failedOffsets.push({ offset, limit });
+                    offset += limit;
+                    await new Promise(r => setTimeout(r, CONFIG.requestDelay));
+                    continue;
+                }
+
+                if (!batchData.data || batchData.data.length === 0) {
+                    reachedEnd = true;
                     break;
                 }
 
-                const data = await resp.json();
-                if (!data.data || data.data.length === 0) break;
-
-                for (const item of data.data) {
+                const batch = [];
+                for (const item of batchData.data) {
                     allItems.push(item);
+                    batch.push(item);
                     count++;
                     if (onItem) onItem(count);
                 }
 
-                if (data.paging && data.paging.is_end) break;
+                if (onBatch) onBatch(batch, batchIndex, offset);
+                batchIndex++;
+
+                if (batchData.paging && batchData.paging.is_end) {
+                    reachedEnd = true;
+                    break;
+                }
                 offset += limit;
                 await new Promise(r => setTimeout(r, CONFIG.requestDelay));
             }
-            return allItems;
+
+            return { items: allItems, failedOffsets };
         },
 
-        // ==================== 答主页 Markdown 生成 ====================
+        // ==================== 失败批次重试 ====================
+        retryFailedBatches: async function(baseUrl, params, failedOffsets, onItem, onBatch) {
+            const recoveredItems = [];
+            const stillFailed = [];
+
+            for (const fo of failedOffsets) {
+                if (this.aborted) break;
+
+                let batchData = null;
+                let success = false;
+
+                let attempt = 0;
+                while (attempt <= CONFIG.maxRetries) {
+                    try {
+                        const urlParams = new URLSearchParams({ ...params, offset: String(fo.offset), limit: String(fo.limit) });
+                        const resp = await fetch(baseUrl + '?' + urlParams.toString());
+
+                        if (!resp.ok) {
+                            if (resp.status === 429) {
+                                await new Promise(r => setTimeout(r, 5000));
+                                continue; // 限流不占用重试次数
+                            }
+                            throw new Error('HTTP ' + resp.status);
+                        }
+
+                        batchData = await resp.json();
+                        success = true;
+                        break;
+                    } catch (err) {
+                        console.warn('重试失败 offset=' + fo.offset + ', 第' + (attempt + 1) + '次: ' + err.message);
+                        attempt++;
+                        if (attempt <= CONFIG.maxRetries) {
+                            await new Promise(r => setTimeout(r, CONFIG.retryDelay * 2 * attempt));
+                        }
+                    }
+                }
+
+                if (success && batchData && batchData.data && batchData.data.length > 0) {
+                    const batch = [];
+                    for (const item of batchData.data) {
+                        recoveredItems.push(item);
+                        batch.push(item);
+                        if (onItem) onItem(recoveredItems.length);
+                    }
+                    if (onBatch) onBatch(batch, -1, fo.offset);
+                } else {
+                    stillFailed.push(fo);
+                }
+
+                await new Promise(r => setTimeout(r, CONFIG.requestDelay));
+            }
+
+            return { items: recoveredItems, stillFailed };
+        },
+
+        // ==================== 工具函数 ====================
+        formatDate: function(ts) {
+            if (!ts) return '未知';
+            const d = new Date(ts * 1000);
+            return d.getFullYear() + '-' +
+                String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                String(d.getDate()).padStart(2, '0');
+        },
+
+        safeFilename: function(name) {
+            return name.replace(/[\\\/:*?"<>|]/g, '_').replace(/\s+/g, '_').substring(0, 200);
+        },
+
+        // ==================== 分批 Markdown 生成 ====================
+
+        /** 答主回答批次 */
+        genPersonAnswerBatchMarkdown: function(authorName, userInfo, answers, batchIdx, startNum, endNum) {
+            const L = [];
+            const now = new Date().toLocaleString('zh-CN');
+            const firstDate = answers.length > 0 ? this.formatDate(answers[0].created_time) : '未知';
+
+            if (CONFIG.addFrontmatter) {
+                L.push('---');
+                L.push('title: "' + this.ey(authorName) + ' - 回答 (' + startNum + '-' + endNum + ')"');
+                L.push('author: "' + this.ey(authorName) + '"');
+                L.push('source: https://www.zhihu.com/people/' + this.urlToken);
+                L.push('export_date: "' + now + '"');
+                L.push('type: 回答');
+                L.push('batch: ' + (batchIdx + 1));
+                L.push('range: "' + startNum + '-' + endNum + '"');
+                L.push('first_date: "' + firstDate + '"');
+                L.push('tags: [知乎导出, ' + authorName + ']');
+                L.push('---');
+                L.push('');
+            }
+
+            L.push('# ' + authorName + ' · 回答 (' + startNum + '-' + endNum + ')');
+            L.push('');
+            if (CONFIG.useCallout) {
+                L.push('> [!info] 批次信息');
+                L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
+                L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 篇');
+                L.push('> **导出时间**：' + now);
+            } else {
+                L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
+                L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 篇');
+            }
+            L.push('');
+            L.push('---');
+            L.push('');
+
+            answers.forEach((a, i) => {
+                const t = this.ansTitle(a);
+                L.push('### ' + (startNum + i) + '. ' + t);
+                L.push('');
+                L.push(this.metaBlock(a.created_time, a.updated_time, a.voteup_count, a.comment_count, this.ansUrl(a)));
+                L.push('');
+                L.push(this.html2md(a.content || '*（内容为空）*'));
+                L.push('');
+                L.push('---');
+                L.push('');
+            });
+
+            L.push('> 本文档由知乎内容导出工具自动生成 · 第 ' + (batchIdx + 1) + ' 批');
+            return L.join('\n');
+        },
+
+        /** 答主文章批次 */
+        genPersonArticleBatchMarkdown: function(authorName, userInfo, articles, batchIdx, startNum, endNum) {
+            const L = [];
+            const now = new Date().toLocaleString('zh-CN');
+            const firstDate = articles.length > 0 ? this.formatDate(articles[0].created) : '未知';
+
+            if (CONFIG.addFrontmatter) {
+                L.push('---');
+                L.push('title: "' + this.ey(authorName) + ' - 文章 (' + startNum + '-' + endNum + ')"');
+                L.push('author: "' + this.ey(authorName) + '"');
+                L.push('source: https://www.zhihu.com/people/' + this.urlToken);
+                L.push('export_date: "' + now + '"');
+                L.push('type: 文章');
+                L.push('batch: ' + (batchIdx + 1));
+                L.push('range: "' + startNum + '-' + endNum + '"');
+                L.push('first_date: "' + firstDate + '"');
+                L.push('tags: [知乎导出, ' + authorName + ']');
+                L.push('---');
+                L.push('');
+            }
+
+            L.push('# ' + authorName + ' · 文章 (' + startNum + '-' + endNum + ')');
+            L.push('');
+            if (CONFIG.useCallout) {
+                L.push('> [!info] 批次信息');
+                L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
+                L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 篇');
+                L.push('> **导出时间**：' + now);
+            } else {
+                L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
+                L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 篇');
+            }
+            L.push('');
+            L.push('---');
+            L.push('');
+
+            articles.forEach((a, i) => {
+                const t = a.title || '无标题';
+                L.push('### ' + (startNum + i) + '. ' + t);
+                L.push('');
+                L.push(this.metaBlock(a.created, a.updated, a.voteup_count, a.comment_count, this.artUrl(a)));
+                L.push('');
+                L.push(this.html2md(a.content || '*（内容为空）*'));
+                L.push('');
+                L.push('---');
+                L.push('');
+            });
+
+            L.push('> 本文档由知乎内容导出工具自动生成 · 第 ' + (batchIdx + 1) + ' 批');
+            return L.join('\n');
+        },
+
+        /** 答主想法批次 */
+        genPersonPinBatchMarkdown: function(authorName, userInfo, pins, batchIdx, startNum, endNum) {
+            const L = [];
+            const now = new Date().toLocaleString('zh-CN');
+            const firstDate = pins.length > 0 ? this.formatDate(pins[0].created) : '未知';
+
+            if (CONFIG.addFrontmatter) {
+                L.push('---');
+                L.push('title: "' + this.ey(authorName) + ' - 想法 (' + startNum + '-' + endNum + ')"');
+                L.push('author: "' + this.ey(authorName) + '"');
+                L.push('source: https://www.zhihu.com/people/' + this.urlToken);
+                L.push('export_date: "' + now + '"');
+                L.push('type: 想法');
+                L.push('batch: ' + (batchIdx + 1));
+                L.push('range: "' + startNum + '-' + endNum + '"');
+                L.push('first_date: "' + firstDate + '"');
+                L.push('tags: [知乎导出, ' + authorName + ']');
+                L.push('---');
+                L.push('');
+            }
+
+            L.push('# ' + authorName + ' · 想法 (' + startNum + '-' + endNum + ')');
+            L.push('');
+            if (CONFIG.useCallout) {
+                L.push('> [!info] 批次信息');
+                L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
+                L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 条');
+                L.push('> **导出时间**：' + now);
+            } else {
+                L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
+                L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 条');
+            }
+            L.push('');
+            L.push('---');
+            L.push('');
+
+            pins.forEach((p, i) => {
+                L.push('### ' + (startNum + i) + '. ' + this.pinPreview(p));
+                L.push('');
+                const d = p.created ? new Date(p.created * 1000).toLocaleDateString('zh-CN') : '未知';
+                const likes = p.like_count || p.reaction_count || 0;
+                const comments = p.comment_count || 0;
+                if (CONFIG.useCallout) {
+                    L.push('> [!note]- 元信息');
+                    L.push('> 📅 ' + d + ' · ❤️ ' + likes + ' · 💬 ' + comments);
+                } else {
+                    L.push('> 📅 ' + d + ' | ❤️ ' + likes + ' | 💬 ' + comments);
+                }
+                L.push('');
+                L.push(this.pinContent(p));
+                L.push('');
+                L.push('---');
+                L.push('');
+            });
+
+            L.push('> 本文档由知乎内容导出工具自动生成 · 第 ' + (batchIdx + 1) + ' 批');
+            return L.join('\n');
+        },
+
+        /** 问题回答批次 */
+        genQuestionAnswerBatchMarkdown: function(qInfo, answers, batchIdx, startNum, endNum, includeDetail, sortBy) {
+            const L = [];
+            const now = new Date().toLocaleString('zh-CN');
+            const qTitle = qInfo.title || '未知问题';
+            const qUrl = 'https://www.zhihu.com/question/' + this.questionId;
+            const sortLabel = sortBy === 'created' ? '按时间' : '按热度';
+            const firstDate = answers.length > 0 ? this.formatDate(answers[0].created_time) : '未知';
+
+            if (CONFIG.addFrontmatter) {
+                L.push('---');
+                L.push('title: "' + this.ey(qTitle) + ' - 回答 (' + startNum + '-' + endNum + ')"');
+                L.push('source: ' + qUrl);
+                L.push('export_date: "' + now + '"');
+                L.push('type: 回答');
+                L.push('batch: ' + (batchIdx + 1));
+                L.push('range: "' + startNum + '-' + endNum + '"');
+                L.push('first_date: "' + firstDate + '"');
+                L.push('sort_by: ' + sortBy);
+                L.push('tags: [知乎导出, 知乎问题]');
+                L.push('---');
+                L.push('');
+            }
+
+            L.push('# ' + qTitle + ' · 回答 (' + startNum + '-' + endNum + ')');
+            L.push('');
+
+            if (CONFIG.useCallout) {
+                L.push('> [!info] 批次信息');
+                L.push('> **问题链接**：[' + qTitle + '](' + qUrl + ')');
+                L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 个回答');
+                L.push('> **排序方式**：' + sortLabel);
+                L.push('> **导出时间**：' + now);
+            } else {
+                L.push('> **问题链接**：[' + qTitle + '](' + qUrl + ')');
+                L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 个回答');
+                L.push('> **排序**：' + sortLabel + ' | **导出时间**：' + now);
+            }
+            L.push('');
+
+            // 第一批包含问题描述
+            if (batchIdx === 0 && includeDetail && qInfo.detail) {
+                L.push('## 📃 问题描述');
+                L.push('');
+                L.push(this.html2md(qInfo.detail));
+                L.push('');
+                L.push('---');
+                L.push('');
+            }
+
+            L.push('## 📝 回答');
+            L.push('');
+
+            answers.forEach((a, i) => {
+                const authorName = (a.author && a.author.name) ? a.author.name : '匿名用户';
+                const authorToken = (a.author && a.author.url_token) ? a.author.url_token : '';
+                const authorHeadline = (a.author && a.author.headline) ? a.author.headline : '';
+                const heading = '回答 ' + (startNum + i) + ' · ' + authorName;
+                const date = a.created_time ? new Date(a.created_time * 1000).toLocaleDateString('zh-CN') : '未知';
+                const updateDate = a.updated_time ? new Date(a.updated_time * 1000).toLocaleDateString('zh-CN') : null;
+                const votes = a.voteup_count != null ? a.voteup_count : '-';
+                const comments = a.comment_count != null ? a.comment_count : '-';
+                const answerUrl = a.id
+                    ? 'https://www.zhihu.com/question/' + this.questionId + '/answer/' + a.id
+                    : '';
+                const authorUrl = authorToken ? 'https://www.zhihu.com/people/' + authorToken : '';
+
+                L.push('### ' + heading);
+                L.push('');
+
+                if (CONFIG.useCallout) {
+                    L.push('> [!note]- 回答信息');
+                    if (authorUrl) {
+                        L.push('> **答主**：[' + authorName + '](' + authorUrl + ')');
+                    } else {
+                        L.push('> **答主**：' + authorName);
+                    }
+                    if (authorHeadline) L.push('> **简介**：' + authorHeadline);
+                    L.push('> 📅 创建：' + date + (updateDate ? ' · 更新：' + updateDate : ''));
+                    L.push('> 👍 赞同：' + votes + ' · 💬 评论：' + comments);
+                    if (answerUrl) L.push('> 🔗 [查看原文](' + answerUrl + ')');
+                } else {
+                    let meta = '> ';
+                    if (authorUrl) meta += '**[' + authorName + '](' + authorUrl + ')**';
+                    else meta += '**' + authorName + '**';
+                    if (authorHeadline) meta += ' · ' + authorHeadline;
+                    L.push(meta);
+                    let meta2 = '> 📅 ' + date;
+                    if (updateDate) meta2 += '（更新: ' + updateDate + '）';
+                    meta2 += ' | 👍 ' + votes + ' | 💬 ' + comments;
+                    if (answerUrl) meta2 += ' | [原文](' + answerUrl + ')';
+                    L.push(meta2);
+                }
+                L.push('');
+
+                L.push(this.html2md(a.content || '*（内容为空）*'));
+                L.push('');
+                L.push('---');
+                L.push('');
+            });
+
+            L.push('> 本文档由知乎内容导出工具自动生成 · 第 ' + (batchIdx + 1) + ' 批');
+            return L.join('\n');
+        },
+
+        // ==================== 答主页 Markdown 生成（完整合集，备用） ====================
         genPersonMarkdown: function(authorName, userInfo, answers, articles, pins) {
             const L = [];
             const now = new Date().toLocaleString('zh-CN');
