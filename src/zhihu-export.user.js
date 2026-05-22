@@ -70,6 +70,8 @@
             const gradientColor = this.mode === 'question'
                 ? 'linear-gradient(135deg, #7B2FF7 0%, #9B59B6 100%)'
                 : 'linear-gradient(135deg, #0066FF 0%, #1a8cff 100%)';
+            const btnColor = this.mode === 'question' ? '#7B2FF7' : '#0066FF';
+            const btnHover = this.mode === 'question' ? '#6622cc' : '#0052cc';
             Object.assign(header.style, {
                 background: gradientColor,
                 padding: '16px 20px', color: 'white', position: 'relative'
@@ -186,40 +188,140 @@
             linkDiv.appendChild(createLinkRadio('standard', '通用 Markdown', false));
             panel.appendChild(linkDiv);
 
-            // ---- 偏移/数量设置 ----
-            const offsetDiv = document.createElement('div');
-            Object.assign(offsetDiv.style, { padding: '12px 20px', borderBottom: '1px solid #f0f0f0' });
-            const offsetLabel = document.createElement('div');
-            offsetLabel.textContent = '下载范围（可选）';
-            Object.assign(offsetLabel.style, { fontSize: '13px', color: '#666', marginBottom: '8px' });
-            offsetDiv.appendChild(offsetLabel);
-
-            const offsetRow = document.createElement('div');
-            Object.assign(offsetRow.style, { display: 'flex', gap: '12px', alignItems: 'center' });
-
+            // ---- 通用输入组件 ----
             const createNumInput = (id, label, value, min) => {
                 const wrap = document.createElement('div');
-                Object.assign(wrap.style, { display: 'flex', alignItems: 'center', gap: '4px' });
+                Object.assign(wrap.style, { display: 'flex', alignItems: 'center', gap: '6px' });
                 const lbl = document.createElement('span');
                 lbl.textContent = label;
-                Object.assign(lbl.style, { fontSize: '12px', color: '#666' });
+                Object.assign(lbl.style, { fontSize: '12px', color: '#666', width: '56px', flexShrink: '0' });
                 const inp = document.createElement('input');
                 inp.type = 'number'; inp.id = id; inp.value = value; inp.min = min || '0';
-                Object.assign(inp.style, { width: '80px', padding: '4px 8px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '13px' });
+                Object.assign(inp.style, { width: '100px', padding: '4px 8px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '13px' });
                 wrap.appendChild(lbl); wrap.appendChild(inp);
                 return wrap;
             };
 
+            // ---- 导出模式切换 Tab ----
+            const modeTabs = document.createElement('div');
+            Object.assign(modeTabs.style, { padding: '8px 20px', borderBottom: '1px solid #f0f0f0', display: 'flex', gap: '6px' });
+
+            const modeDateSection = document.createElement('div');
+            const modeOffsetSection = document.createElement('div');
+
+            const setModeUI = (mode) => {
+                modeDateSection.style.display = mode === 'date' ? 'block' : 'none';
+                modeOffsetSection.style.display = mode === 'offset' ? 'block' : 'none';
+                [tabDate, tabOffset].forEach(t => {
+                    const active = t.dataset.mode === mode;
+                    t.style.backgroundColor = active ? btnColor : '#f0f0f0';
+                    t.style.color = active ? '#fff' : '#666';
+                    t.style.fontWeight = active ? '600' : '400';
+                });
+            };
+
+            const tabDate = document.createElement('div');
+            tabDate.textContent = '📅 按日期'; tabDate.dataset.mode = 'date';
+            Object.assign(tabDate.style, { flex: '1', textAlign: 'center', padding: '6px 0', cursor: 'pointer', fontSize: '13px', borderRadius: '6px', transition: 'all 0.15s', userSelect: 'none' });
+            tabDate.onclick = () => setModeUI('date');
+
+            const tabOffset = document.createElement('div');
+            tabOffset.textContent = '🔢 按偏移'; tabOffset.dataset.mode = 'offset';
+            Object.assign(tabOffset.style, { flex: '1', textAlign: 'center', padding: '6px 0', cursor: 'pointer', fontSize: '13px', borderRadius: '6px', transition: 'all 0.15s', userSelect: 'none' });
+            tabOffset.onclick = () => setModeUI('offset');
+
+            modeTabs.appendChild(tabDate);
+            modeTabs.appendChild(tabOffset);
+            panel.appendChild(modeTabs);
+
+            // ========== 按日期模式 ==========
+            Object.assign(modeDateSection.style, { padding: '12px 20px', borderBottom: '1px solid #f0f0f0' });
+
+            let dateFromInp, dateToInp;
+            const dateRow = document.createElement('div');
+            Object.assign(dateRow.style, { display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '8px' });
+            const createDateInput = (id, label) => {
+                const wrap = document.createElement('div');
+                Object.assign(wrap.style, { display: 'flex', alignItems: 'center', gap: '6px' });
+                const lbl = document.createElement('span');
+                lbl.textContent = label;
+                Object.assign(lbl.style, { fontSize: '12px', color: '#666', width: '56px', flexShrink: '0' });
+                const inp = document.createElement('input');
+                inp.type = 'date'; inp.id = id;
+                Object.assign(inp.style, { flex: '1', padding: '4px 8px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '13px' });
+                wrap.appendChild(lbl); wrap.appendChild(inp);
+                if (id === 'exp-date-from') dateFromInp = inp;
+                if (id === 'exp-date-to') dateToInp = inp;
+                return wrap;
+            };
+            dateRow.appendChild(createDateInput('exp-date-from', '起始'));
+            dateRow.appendChild(createDateInput('exp-date-to', '结束'));
+            modeDateSection.appendChild(dateRow);
+
+            const dateSelectRow = document.createElement('div');
+            Object.assign(dateSelectRow.style, { display: 'flex', gap: '8px' });
+
+            const quickSel = document.createElement('select');
+            quickSel.id = 'exp-quick';
+            Object.assign(quickSel.style, { flex: '1', padding: '4px 4px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '12px', color: '#666' });
+            ['近一周','近一月','近一年','全部'].forEach((opt, i) => { const o = document.createElement('option'); o.value = i; o.textContent = opt; quickSel.appendChild(o); });
+            dateSelectRow.appendChild(quickSel);
+
+            const granSel = document.createElement('select');
+            granSel.id = 'exp-gran';
+            Object.assign(granSel.style, { flex: '1', padding: '4px 4px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '12px', color: '#666' });
+            ['每天','每周','每月','全部'].forEach(opt => { const o = document.createElement('option'); o.value = opt; o.textContent = opt; granSel.appendChild(o); });
+            dateSelectRow.appendChild(granSel);
+            modeDateSection.appendChild(dateSelectRow);
+            panel.appendChild(modeDateSection);
+
+            // 快捷选择逻辑 + 默认日期（近一年）
+            const today = new Date();
+            const fmtDate = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+            if (dateFromInp) dateFromInp.value = fmtDate(new Date(today.getFullYear()-1, today.getMonth(), today.getDate()));
+            if (dateToInp)   dateToInp.value   = fmtDate(today);
+            quickSel.onchange = () => {
+                const now = new Date(); let from;
+                switch (quickSel.value) {
+                    case '0': from = new Date(now.getTime()-7*864e5); break;
+                    case '1': from = new Date(now.getTime()-30*864e5); break;
+                    case '2': from = new Date(now.getFullYear()-1, now.getMonth(), now.getDate()); break;
+                    case '3': from = new Date('2010-01-01'); break;
+                }
+                if (dateFromInp) dateFromInp.value = fmtDate(from);
+                if (dateToInp)   dateToInp.value   = fmtDate(now);
+            };
+
+            // ========== 按偏移模式 ==========
+            Object.assign(modeOffsetSection.style, { padding: '12px 20px', borderBottom: '1px solid #f0f0f0', display: 'none' });
+
+            const offsetRow = document.createElement('div');
+            Object.assign(offsetRow.style, { display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '8px' });
             offsetRow.appendChild(createNumInput('exp-offset', '起始偏移', '0', '0'));
             offsetRow.appendChild(createNumInput('exp-limit', '每页数量', '20', '1'));
-            offsetDiv.appendChild(offsetRow);
+            offsetRow.appendChild(createNumInput('exp-max', '最多条数', '0', '0'));
+            modeOffsetSection.appendChild(offsetRow);
+
+            const offsetSaveRow = document.createElement('div');
+            Object.assign(offsetSaveRow.style, { display: 'flex', alignItems: 'center', gap: '6px' });
+            const offsetSaveLbl = document.createElement('span');
+            offsetSaveLbl.textContent = '文件保存';
+            Object.assign(offsetSaveLbl.style, { fontSize: '12px', color: '#666', width: '56px', flexShrink: '0' });
+            const offsetSaveSel = document.createElement('select');
+            offsetSaveSel.id = 'exp-offset-save';
+            Object.assign(offsetSaveSel.style, { flex: '1', padding: '4px 4px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '12px', color: '#666' });
+            ['每批一个文件','合并为一个文件'].forEach(opt => { const o = document.createElement('option'); o.value = opt; o.textContent = opt; offsetSaveSel.appendChild(o); });
+            offsetSaveRow.appendChild(offsetSaveLbl);
+            offsetSaveRow.appendChild(offsetSaveSel);
+            modeOffsetSection.appendChild(offsetSaveRow);
 
             const offsetHint = document.createElement('div');
-            offsetHint.textContent = 'offset=0 从头开始，limit 建议 5~20';
+            offsetHint.textContent = 'offset=0 从头开始 · 最多条数=0 不限制';
             Object.assign(offsetHint.style, { fontSize: '11px', color: '#999', marginTop: '6px' });
-            offsetDiv.appendChild(offsetHint);
+            modeOffsetSection.appendChild(offsetHint);
+            panel.appendChild(modeOffsetSection);
 
-            panel.appendChild(offsetDiv);
+            setModeUI('date');
 
             // ---- 进度区 ----
             const progressDiv = document.createElement('div');
@@ -255,9 +357,6 @@
             const btnDiv = document.createElement('div');
             Object.assign(btnDiv.style, { padding: '12px 20px 16px' });
 
-            const btnColor = this.mode === 'question' ? '#7B2FF7' : '#0066FF';
-            const btnHover = this.mode === 'question' ? '#6622cc' : '#0052cc';
-
             const exportBtn = document.createElement('button');
             exportBtn.textContent = '🚀 开始导出';
             Object.assign(exportBtn.style, {
@@ -268,8 +367,13 @@
             exportBtn.onmouseenter = () => { if (!exportBtn.disabled) exportBtn.style.backgroundColor = btnHover; };
             exportBtn.onmouseleave = () => { if (!exportBtn.disabled) exportBtn.style.backgroundColor = btnColor; };
             exportBtn.onclick = () => {
-                if (this.mode === 'person') this.startPersonExport();
-                else this.startQuestionExport();
+                if (this.mode === 'person') {
+                    // 判断当前是「按日期」还是「按偏移」模式
+                    if (modeDateSection.style.display !== 'none') this.startDateExport();
+                    else this.startPersonExport();
+                } else {
+                    this.startQuestionExport();
+                }
             };
             btnDiv.appendChild(exportBtn);
 
@@ -343,9 +447,13 @@
             const expPins = document.getElementById('exp-pins').checked;
             CONFIG.linkStyle = (document.querySelector('input[name="link-style"]:checked') || {}).value || 'obsidian';
 
-            // 读取手动 offset/limit
+            // 读取手动 offset/limit/max
             const startOffset = parseInt(document.getElementById('exp-offset')?.value) || 0;
             const batchLimit = parseInt(document.getElementById('exp-limit')?.value) || 20;
+            const maxItems = parseInt(document.getElementById('exp-max')?.value) || 0;
+            const offsetSaveMode = document.getElementById('exp-offset-save')?.value || '每批一个文件';
+            const mergeMode = offsetSaveMode === '合并为一个文件';
+            const mergedAnswers = [], mergedArticles = [], mergedPins = [];
 
             if (!expAnswers && !expArticles && !expPins) {
                 alert('请至少选择一种内容类型！'); return;
@@ -363,79 +471,132 @@
                 const userInfo = await userResp.json();
                 const authorName = userInfo.name || this.urlToken;
 
-                const allFailedOffsets = []; // 收集所有失败的 offset 信息
+                const allFailedOffsets = [];
+
+                // ---- 按实际数据量动态分配进度条区间 ----
+                // 先以 userInfo 的预估值初始化，后续用 API 返回的真实 totals 修正
+                const estA = expAnswers ? (userInfo.answer_count || 0) : 0;
+                const estR = expArticles ? (userInfo.articles_count || 0) : 0;
+                const estP = expPins     ? (userInfo.pins_count || 0) : 0;
+                const estTotal = estA + estR + estP || 1;
+                let   pA = 0, pR = 0, pP = 96;          // 进度条分段终点（会动态修正）
+
+                const recalcRanges = (realA, realR, realP) => {
+                    const tot = (realA || estA) + (realR || estR) + (realP || estP) || 1;
+                    pA = Math.round((realA || estA) / tot * 96);
+                    pR = Math.round(((realA || estA) + (realR || estR)) / tot * 96);
+                    pP = 96;
+                };
+                recalcRanges(estA, estR, estP);
 
                 // ---- 导出回答（分批输出文件） ----
                 if (expAnswers && !this.aborted) {
-                    const answerTotal = userInfo.answer_count || 0;
-                    const totalDisplay = answerTotal > 0 ? answerTotal : '?';
-                    this.setProgress(0, '正在导出回答...', '0 / ' + totalDisplay);
+                    let displayTotal = estA > 0 ? estA : '?';
+                    this.setProgress(0, '正在导出回答...', '0 / ' + displayTotal);
                     const answerParams = { include: 'data[*].content,voteup_count,created_time,updated_time,comment_count,question.title', limit: batchLimit, sort_by: 'created' };
                     const answerBase = '/api/v4/members/' + this.urlToken + '/answers';
 
                     const result = await this.fetchAllPaged(
                         answerBase, answerParams,
-                        (c) => { this.setProgress(Math.min(c / Math.max(answerTotal, 1) * 33, 33).toFixed(1), '正在导出回答...', c + ' / ' + totalDisplay); },
+                        (c) => {
+                            // 分母永不低于分子，避免出现 6892/6643
+                            const denom = (typeof displayTotal === 'number' && displayTotal > 0)
+                                ? Math.max(displayTotal, c) : c;
+                            const dispDenom = (typeof displayTotal === 'number' && displayTotal > 0)
+                                ? Math.max(displayTotal, c) : '?';
+                            this.setProgress(
+                                Math.min(c / Math.max(denom, 1) * pA, pA).toFixed(1),
+                                '正在导出回答...',
+                                c + ' / ' + dispDenom
+                            );
+                        },
                         (batch, batchIdx) => {
+                            if (mergeMode) { mergedAnswers.push(...batch); return; }
                             const firstDate = batch.length > 0 ? this.formatDate(batch[0].created_time) : '未知';
-                            const startNum = batchIdx * batchLimit + 1;
+                            const startNum = startOffset + batchIdx * batchLimit + 1;
                             const endNum = startNum + batch.length - 1;
                             const md = this.genPersonAnswerBatchMarkdown(authorName, userInfo, batch, batchIdx, startNum, endNum);
                             const filename = this.safeFilename(authorName + '_回答_' + firstDate + '_' + startNum + '-' + endNum);
                             this.downloadFile(md, filename);
                         },
-                        startOffset
+                        startOffset, maxItems
                     );
+                    // 用 API 返回的真实总数修正
+                    if (result.totals > estA) { displayTotal = result.totals; recalcRanges(result.totals, estR, estP); }
                     this.stats.answers = result.items.length;
                     result.failedOffsets.forEach(fo => allFailedOffsets.push({ type: '回答', baseUrl: answerBase, params: answerParams, offset: fo.offset, limit: fo.limit }));
                 }
 
                 // ---- 导出文章（分批输出文件） ----
                 if (expArticles && !this.aborted) {
-                    const articleTotal = userInfo.articles_count || 0;
-                    const totalDisplay = articleTotal > 0 ? articleTotal : '?';
-                    this.setProgress(33, '正在导出文章...', '0 / ' + totalDisplay);
+                    let displayTotal = estR > 0 ? estR : '?';
+                    this.setProgress(pA, '正在导出文章...', '0 / ' + displayTotal);
                     const articleParams = { include: 'data[*].content,voteup_count,created,updated,comment_count,title', limit: batchLimit, sort_by: 'created' };
                     const articleBase = '/api/v4/members/' + this.urlToken + '/articles';
 
                     const result = await this.fetchAllPaged(
                         articleBase, articleParams,
-                        (c) => { this.setProgress(33 + Math.min(c / Math.max(articleTotal, 1) * 33, 33).toFixed(1), '正在导出文章...', c + ' / ' + totalDisplay); },
+                        (c) => {
+                            const denom = (typeof displayTotal === 'number' && displayTotal > 0)
+                                ? Math.max(displayTotal, c) : c;
+                            const dispDenom = (typeof displayTotal === 'number' && displayTotal > 0)
+                                ? Math.max(displayTotal, c) : '?';
+                            const segLen = pR - pA;
+                            this.setProgress(
+                                (pA + Math.min(c / Math.max(denom, 1) * segLen, segLen)).toFixed(1),
+                                '正在导出文章...',
+                                c + ' / ' + dispDenom
+                            );
+                        },
                         (batch, batchIdx) => {
+                            if (mergeMode) { mergedArticles.push(...batch); return; }
                             const firstDate = batch.length > 0 ? this.formatDate(batch[0].created) : '未知';
-                            const startNum = batchIdx * batchLimit + 1;
+                            const startNum = startOffset + batchIdx * batchLimit + 1;
                             const endNum = startNum + batch.length - 1;
                             const md = this.genPersonArticleBatchMarkdown(authorName, userInfo, batch, batchIdx, startNum, endNum);
                             const filename = this.safeFilename(authorName + '_文章_' + firstDate + '_' + startNum + '-' + endNum);
                             this.downloadFile(md, filename);
                         },
-                        startOffset
+                        startOffset, maxItems
                     );
+                    if (result.totals > estR) { displayTotal = result.totals; recalcRanges(this.stats.answers || estA, result.totals, estP); }
                     this.stats.articles = result.items.length;
                     result.failedOffsets.forEach(fo => allFailedOffsets.push({ type: '文章', baseUrl: articleBase, params: articleParams, offset: fo.offset, limit: fo.limit }));
                 }
 
                 // ---- 导出想法（分批输出文件） ----
                 if (expPins && !this.aborted) {
-                    const pinTotal = userInfo.pins_count || 0;
-                    const totalDisplay = pinTotal > 0 ? pinTotal : '?';
-                    this.setProgress(66, '正在导出想法...', '0 / ' + totalDisplay);
+                    let displayTotal = estP > 0 ? estP : '?';
+                    this.setProgress(pR, '正在导出想法...', '0 / ' + displayTotal);
                     const pinParams = { limit: batchLimit };
                     const pinBase = '/api/v4/members/' + this.urlToken + '/pins';
 
                     const result = await this.fetchAllPaged(
                         pinBase, pinParams,
-                        (c) => { this.setProgress(66 + Math.min(c / Math.max(pinTotal, 1) * 30, 30).toFixed(1), '正在导出想法...', c + ' / ' + totalDisplay); },
+                        (c) => {
+                            const denom = (typeof displayTotal === 'number' && displayTotal > 0)
+                                ? Math.max(displayTotal, c) : c;
+                            const dispDenom = (typeof displayTotal === 'number' && displayTotal > 0)
+                                ? Math.max(displayTotal, c) : '?';
+                            const segLen = pP - pR;
+                            this.setProgress(
+                                (pR + Math.min(c / Math.max(denom, 1) * segLen, segLen)).toFixed(1),
+                                '正在导出想法...',
+                                c + ' / ' + dispDenom
+                            );
+                        },
                         (batch, batchIdx) => {
+                            if (mergeMode) { mergedPins.push(...batch); return; }
                             const firstDate = batch.length > 0 ? this.formatDate(batch[0].created) : '未知';
-                            const startNum = batchIdx * batchLimit + 1;
+                            const startNum = startOffset + batchIdx * batchLimit + 1;
                             const endNum = startNum + batch.length - 1;
                             const md = this.genPersonPinBatchMarkdown(authorName, userInfo, batch, batchIdx, startNum, endNum);
                             const filename = this.safeFilename(authorName + '_想法_' + firstDate + '_' + startNum + '-' + endNum);
                             this.downloadFile(md, filename);
                         },
-                        startOffset
+                        startOffset, maxItems
                     );
+                    if (result.totals > estP) { displayTotal = result.totals; }
                     this.stats.pins = result.items.length;
                     result.failedOffsets.forEach(fo => allFailedOffsets.push({ type: '想法', baseUrl: pinBase, params: pinParams, offset: fo.offset, limit: fo.limit }));
                 }
@@ -452,7 +613,7 @@
                         const retryResult = await this.retryFailedBatches(
                             fo.baseUrl, fo.params, [{ offset: fo.offset, limit: fo.limit }],
                             null,
-                            (batch) => {
+                            mergeMode ? null : (batch) => {
                                 const firstDate = batch.length > 0 ? this.formatDate(batch[0].created_time || batch[0].created) : '未知';
                                 const md = fo.type === '回答'
                                     ? this.genPersonAnswerBatchMarkdown(authorName, userInfo, batch, -1, fo.offset + 1, fo.offset + batch.length)
@@ -468,7 +629,20 @@
                         } else {
                             const key = fo.type === '回答' ? 'answers' : fo.type === '文章' ? 'articles' : 'pins';
                             this.stats[key] += retryResult.items.length;
+                            // 合并模式：把重试恢复的条目也加入累积数组
+                            if (mergeMode) {
+                                if (fo.type === '回答') mergedAnswers.push(...retryResult.items);
+                                else if (fo.type === '文章') mergedArticles.push(...retryResult.items);
+                                else mergedPins.push(...retryResult.items);
+                            }
                         }
+                    }
+
+                    // 合并模式：生成合集文件
+                    if (mergeMode && !this.aborted) {
+                        this.setProgress(98, '正在生成合集 Markdown...', '');
+                        const md = this.genPersonMarkdown(authorName, userInfo, mergedAnswers, mergedArticles, mergedPins);
+                        this.downloadFile(md, authorName + '_内容合集');
                     }
 
                     if (stillFailed.length > 0) {
@@ -481,6 +655,12 @@
                             '回答: ' + this.stats.answers + ' | 文章: ' + this.stats.articles + ' | 想法: ' + this.stats.pins);
                     }
                 } else {
+                    // 合并模式：无失败批次，直接生成合集
+                    if (mergeMode && !this.aborted) {
+                        this.setProgress(98, '正在生成合集 Markdown...', '');
+                        const md = this.genPersonMarkdown(authorName, userInfo, mergedAnswers, mergedArticles, mergedPins);
+                        this.downloadFile(md, authorName + '_内容合集');
+                    }
                     this.setProgress(100, '✅ 导出完成！',
                         '回答: ' + this.stats.answers + ' | 文章: ' + this.stats.articles + ' | 想法: ' + this.stats.pins);
                 }
@@ -503,9 +683,10 @@
             const includeDetail = document.getElementById('exp-q-detail') ? document.getElementById('exp-q-detail').checked : true;
             CONFIG.linkStyle = (document.querySelector('input[name="link-style"]:checked') || {}).value || 'obsidian';
 
-            // 读取手动 offset/limit
+            // 读取手动 offset/limit/max
             const startOffset = parseInt(document.getElementById('exp-offset')?.value) || 0;
             const batchLimit = parseInt(document.getElementById('exp-limit')?.value) || 20;
+            const maxItems = parseInt(document.getElementById('exp-max')?.value) || 0;
 
             this.lockUI();
             this.setProgress(0, '正在获取问题信息...', '');
@@ -519,9 +700,10 @@
                 if (!qResp.ok) throw new Error('获取问题信息失败: ' + qResp.status);
                 const qInfo = await qResp.json();
                 const qTitle = qInfo.title || '未知问题';
-                const totalAnswers = qInfo.answer_count || 0;
+                let displayTotal = qInfo.answer_count || 0;
+                const totalDisplay = displayTotal > 0 ? displayTotal : '?';
 
-                this.setProgress(5, '正在导出回答...', '0 / ' + totalAnswers);
+                this.setProgress(5, '正在导出回答...', '0 / ' + totalDisplay);
 
                 // 获取所有回答（分批输出文件）
                 const answerParams = {
@@ -534,19 +716,24 @@
                 const result = await this.fetchAllPaged(
                     answerBase, answerParams,
                     (count) => {
-                        const pct = totalAnswers > 0 ? Math.min(5 + (count / totalAnswers) * 85, 90) : 50;
-                        this.setProgress(pct.toFixed(1), '正在导出回答...', count + ' / ' + totalAnswers);
+                        // 分母永不低于分子，避免出现数字倒挂
+                        const denom = displayTotal > 0 ? Math.max(displayTotal, count) : count;
+                        const dispDenom = displayTotal > 0 ? Math.max(displayTotal, count) : '?';
+                        const pct = denom > 0 ? Math.min(5 + (count / denom) * 85, 90) : 50;
+                        this.setProgress(pct.toFixed(1), '正在导出回答...', count + ' / ' + dispDenom);
                     },
                     (batch, batchIdx) => {
                         const firstDate = batch.length > 0 ? this.formatDate(batch[0].created_time) : '未知';
-                        const startNum = batchIdx * batchLimit + 1;
+                        const startNum = startOffset + batchIdx * batchLimit + 1;
                         const endNum = startNum + batch.length - 1;
                         const md = this.genQuestionAnswerBatchMarkdown(qInfo, batch, batchIdx, startNum, endNum, includeDetail, sortBy);
                         const filename = this.safeFilename(qTitle + '_回答_' + firstDate + '_' + startNum + '-' + endNum);
                         this.downloadFile(md, filename);
                     },
-                    startOffset
+                    startOffset, maxItems
                 );
+                // 用 API 返回的真实总数修正
+                if (result.totals > displayTotal) displayTotal = result.totals;
                 this.stats.answers = result.items.length;
 
                 if (this.aborted) { this.setProgress(0, '导出已取消', ''); this.resetUI(2000); return; }
@@ -588,11 +775,12 @@
         },
 
         // ==================== API 分页请求（支持重试、断点续传、分批回调） ====================
-        fetchAllPaged: async function(baseUrl, params, onItem, onBatch, startOffset) {
+        fetchAllPaged: async function(baseUrl, params, onItem, onBatch, startOffset, maxItems) {
             const allItems = [];
             const failedOffsets = [];
             let offset = (startOffset !== undefined) ? startOffset : 0;
             const limit = params.limit || 20;
+            const max = (maxItems > 0) ? maxItems : Infinity;
             let count = 0;
             let batchIndex = 0;
             let reachedEnd = false;
@@ -650,11 +838,18 @@
                     batch.push(item);
                     count++;
                     if (onItem) onItem(count);
+                    if (count >= max) break;  // 达到用户指定的最大条数
+                }
+
+                // 首個批次：記錄 API 返回的真實總數（paging.totals 比 userInfo.*_count 準確）
+                if (batchIndex === 0 && batchData.paging && batchData.paging.totals) {
+                    allItems._apiTotal = batchData.paging.totals;
                 }
 
                 if (onBatch) onBatch(batch, batchIndex, offset);
                 batchIndex++;
 
+                if (count >= max) { reachedEnd = true; break; }  // 达到上限，停止
                 if (batchData.paging && batchData.paging.is_end) {
                     reachedEnd = true;
                     break;
@@ -663,7 +858,10 @@
                 await new Promise(r => setTimeout(r, CONFIG.requestDelay));
             }
 
-            return { items: allItems, failedOffsets };
+            // 用 API 真實總數，fallback 到實際下載數量
+            const apiTotal = allItems._apiTotal || allItems.length;
+            delete allItems._apiTotal;
+            return { items: allItems, failedOffsets, totals: apiTotal };
         },
 
         // ==================== 失败批次重试 ====================
@@ -719,6 +917,207 @@
             }
 
             return { items: recoveredItems, stillFailed };
+        },
+
+        // ==================== 二分查找日期边界 ====================
+        // 返回第一个 created_time < targetTs 的 offset（0-based）
+        // 若所有项都 >= targetTs，返回 total；若都 < targetTs，返回 0
+        binarySearchDate: async function(baseUrl, timeKey, targetTs) {
+            // 取第一条，获得总数和最新时间
+            let resp = await fetch(baseUrl + '?sort_by=created&offset=0&limit=1');
+            if (!resp.ok) throw new Error('二分查找失败: HTTP ' + resp.status);
+            const first = await resp.json();
+            if (!first.data || !first.data[0]) return { offset: 0, total: 0 };
+
+            const total = first.paging.totals;
+            const newest = first.data[0][timeKey];
+            // 目标比最新还新 → 所有项都 < targetTs → offset=0
+            if (targetTs > newest) return { offset: 0, total };
+
+            // 找实际最大 offset（容错：totals 可能偏大）
+            let hi = total - 1;
+            while (hi >= 0) {
+                resp = await fetch(baseUrl + '?sort_by=created&offset=' + hi + '&limit=1');
+                if (!resp.ok) { hi--; continue; }
+                const d = await resp.json();
+                if (d.data && d.data[0]) break;
+                hi--;
+            }
+            if (hi < 0) return { offset: 0, total };
+
+            // 二分：找第一个 time < targetTs 的位置
+            let lo = 0;
+            while (lo < hi) {
+                const mid = (lo + hi) >> 1;
+                resp = await fetch(baseUrl + '?sort_by=created&offset=' + mid + '&limit=1');
+                if (!resp.ok) { hi = mid; continue; }
+                const d = await resp.json();
+                if (!d.data || !d.data[0]) { hi = mid; continue; }
+                if (d.data[0][timeKey] >= targetTs) lo = mid + 1;
+                else hi = mid;
+            }
+            return { offset: lo, total };
+        },
+
+        // ==================== 按日期导出 ====================
+        startDateExport: async function() {
+            this.aborted = false;
+            this.stats = { answers: 0, articles: 0, pins: 0 };
+
+            const expAnswers  = document.getElementById('exp-answers').checked;
+            const expArticles = document.getElementById('exp-articles').checked;
+            const expPins     = document.getElementById('exp-pins').checked;
+            CONFIG.linkStyle  = (document.querySelector('input[name="link-style"]:checked') || {}).value || 'obsidian';
+
+            const dateFromRaw = document.getElementById('exp-date-from')?.value;
+            const dateToRaw   = document.getElementById('exp-date-to')?.value;
+            const granularity = document.getElementById('exp-gran')?.value || '每天';
+
+            if (!dateFromRaw || !dateToRaw) { alert('请填写起始和结束日期'); return; }
+            const tsFrom = new Date(dateFromRaw + 'T00:00:00+08:00').getTime() / 1000;
+            const tsTo   = new Date(dateToRaw   + 'T23:59:59+08:00').getTime() / 1000;
+            if (tsFrom > tsTo) { alert('起始日期不能晚于结束日期'); return; }
+
+            if (!expAnswers && !expArticles && !expPins) { alert('请至少选择一种内容类型！'); return; }
+
+            this.lockUI();
+            this.setProgress(0, '正在二分查找日期边界...', '');
+
+            try {
+                const userResp = await fetch(
+                    '/api/v4/members/' + this.urlToken +
+                    '?include=' + encodeURIComponent('name,headline')
+                );
+                const userInfo = userResp.ok ? await userResp.json() : {};
+                const authorName = userInfo.name || this.urlToken;
+
+                // 定义三种内容类型的配置
+                const types = [];
+                if (expAnswers)  types.push({ type: '回答', endpoint: 'answers', timeKey: 'created_time', params: { include: 'data[*].content,voteup_count,created_time,updated_time,comment_count,question.title', limit: 20, sort_by: 'created' } });
+                if (expArticles) types.push({ type: '文章', endpoint: 'articles', timeKey: 'created',       params: { include: 'data[*].content,voteup_count,created,updated,comment_count,title', limit: 20, sort_by: 'created' } });
+                if (expPins)     types.push({ type: '想法', endpoint: 'pins',     timeKey: 'created',       params: { limit: 20, sort_by: 'created' } });
+
+                const allItems = []; // { type, items[] }
+
+                for (let ti = 0; ti < types.length; ti++) {
+                    if (this.aborted) break;
+                    const t = types[ti];
+                    const baseUrl = '/api/v4/members/' + this.urlToken + '/' + t.endpoint;
+                    this.setProgress(10 + ti * 25, '正在定位「' + t.type + '」日期边界...', '');
+
+                    // 二分查找：找第一条 < tsFrom 的 offset → offsetEnd
+                    //          找第一条 < tsTo+1day 的 offset → offsetStart
+                    const r1 = await this.binarySearchDate(baseUrl, t.timeKey, tsFrom);
+                    const r2 = await this.binarySearchDate(baseUrl, t.timeKey, tsTo + 86400);
+                    const offsetStart = r2.offset; // 第一条 < tsTo+1day
+                    const offsetEnd   = r1.offset; // 第一条 < tsFrom
+                    const estCount = offsetEnd - offsetStart;
+
+                    if (estCount <= 0) {
+                        console.log(t.type + ': 该日期范围内无内容');
+                        continue;
+                    }
+
+                    this.setProgress(15 + ti * 25, '正在下载「' + t.type + '」(' + estCount + ' 条)...', '0 / ' + estCount);
+
+                    const result = await this.fetchAllPaged(
+                        baseUrl, t.params,
+                        (c) => {
+                            this.setProgress(15 + ti * 25 + Math.min(c / Math.max(estCount, 1) * 10, 10).toFixed(1),
+                                '正在下载「' + t.type + '」', c + ' / ' + estCount);
+                        },
+                        null,  // 不分批输出，最后统一按日期分组
+                        offsetStart,
+                        estCount  // maxItems = 该日期范围内的条数
+                    );
+
+                    if (result.items.length > 0) {
+                        allItems.push({ type: t.type, timeKey: t.timeKey, items: result.items });
+                    }
+                    const key = t.type === '回答' ? 'answers' : t.type === '文章' ? 'articles' : 'pins';
+                    this.stats[key] = result.items.length;
+                }
+
+                if (this.aborted) { this.setProgress(0, '导出已取消', ''); this.resetUI(2000); return; }
+
+                // ---- 按粒度分组并输出文件 ----
+                this.setProgress(90, '正在按日期分组生成文件...', '');
+                const getItemDate = (item, timeKey) => {
+                    const ts = item[timeKey];
+                    return ts ? new Date(ts * 1000) : null;
+                };
+                const dateStr = (d) => d ? this.formatDate(d.getTime() / 1000) : '未知';
+
+                // 收集所有分组
+                const groups = []; // { label, filenameDate, items: [{type, timeKey, item}] }
+                const addToGroup = (label, filenameDate, typedItem) => {
+                    let g = groups.find(x => x.label === label && x.type === typedItem.type);
+                    if (!g) {
+                        g = { label, filenameDate, type: typedItem.type, timeKey: typedItem.timeKey, items: [] };
+                        groups.push(g);
+                    }
+                    g.items.push(typedItem);
+                };
+
+                for (const ct of allItems) {
+                    for (const item of ct.items) {
+                        const d = getItemDate(item, ct.timeKey);
+                        if (!d) continue;
+                        let label, filenameDate;
+                        switch (granularity) {
+                            case '每天':
+                                label = dateStr(d);
+                                filenameDate = label;
+                                break;
+                            case '每周': {
+                                const startOfWeek = new Date(d);
+                                startOfWeek.setDate(d.getDate() - d.getDay());
+                                label = dateStr(startOfWeek) + ' 周';
+                                filenameDate = dateStr(startOfWeek);
+                                break;
+                            }
+                            case '每月':
+                                label = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+                                filenameDate = label;
+                                break;
+                            case '全部':
+                            default:
+                                label = '全部';
+                                filenameDate = dateStr(new Date(tsFrom * 1000)) + '_' + dateStr(new Date(tsTo * 1000));
+                                break;
+                        }
+                        addToGroup(label, filenameDate, { type: ct.type, timeKey: ct.timeKey, item });
+                    }
+                }
+
+                // 生成并下载每个分组的 Markdown
+                let fileCount = 0;
+                for (const g of groups) {
+                    if (this.aborted) break;
+                    let md;
+                    const genBatch = (batchIdx, startNum, endNum) => {
+                        const batchItems = g.items.map(x => x.item);
+                        if (g.type === '回答') return this.genPersonAnswerBatchMarkdown(authorName, userInfo, batchItems, 0, startNum, endNum);
+                        if (g.type === '文章') return this.genPersonArticleBatchMarkdown(authorName, userInfo, batchItems, 0, startNum, endNum);
+                        return this.genPersonPinBatchMarkdown(authorName, userInfo, batchItems, 0, startNum, endNum);
+                    };
+                    md = genBatch(0, 1, g.items.length);
+                    const filename = this.safeFilename(authorName + '_' + g.type + '_' + g.filenameDate);
+                    this.downloadFile(md, filename);
+                    fileCount++;
+                }
+
+                const totalItems = allItems.reduce((s, ct) => s + ct.items.length, 0);
+                this.setProgress(100, '✅ 导出完成！',
+                    '回答:' + this.stats.answers + ' 文章:' + this.stats.articles + ' 想法:' + this.stats.pins +
+                    ' | 文件数:' + fileCount);
+
+            } catch (err) {
+                console.error('日期导出失败:', err);
+                this.setProgress(0, '❌ 导出失败: ' + err.message, '');
+            } finally {
+                this.resetUI(8000);
+            }
         },
 
         // ==================== 工具函数 ====================
