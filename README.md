@@ -9,6 +9,8 @@
 
 导出格式为 Markdown，默认对 Obsidian 友好。
 
+支持答主回答、文章、想法按照时间范围导出，并分批导出文件（以防文件过大）
+
 ## Features
 
 - 支持 `https://www.zhihu.com/people/*`

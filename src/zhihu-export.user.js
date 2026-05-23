@@ -19,7 +19,9 @@
         linkStyle: 'obsidian',     // 'obsidian' | 'standard'
         addFrontmatter: true,
         useCallout: true,
-        requestDelay: 350
+        requestDelay: 350,
+        maxRetries: 3,             // 最大重试次数
+        retryDelay: 1500           // 重试间隔（毫秒）
     };
 
     // ======================== 主对象 ========================
@@ -68,6 +70,8 @@
             const gradientColor = this.mode === 'question'
                 ? 'linear-gradient(135deg, #7B2FF7 0%, #9B59B6 100%)'
                 : 'linear-gradient(135deg, #0066FF 0%, #1a8cff 100%)';
+            const btnColor = this.mode === 'question' ? '#7B2FF7' : '#0066FF';
+            const btnHover = this.mode === 'question' ? '#6622cc' : '#0052cc';
             Object.assign(header.style, {
                 background: gradientColor,
                 padding: '16px 20px', color: 'white', position: 'relative'
@@ -184,6 +188,148 @@
             linkDiv.appendChild(createLinkRadio('standard', '通用 Markdown', false));
             panel.appendChild(linkDiv);
 
+            // ---- 通用输入组件 ----
+            const createNumInput = (id, label, value, min) => {
+                const wrap = document.createElement('div');
+                Object.assign(wrap.style, { display: 'flex', alignItems: 'center', gap: '6px' });
+                const lbl = document.createElement('span');
+                lbl.textContent = label;
+                Object.assign(lbl.style, { fontSize: '12px', color: '#666', width: '56px', flexShrink: '0' });
+                const inp = document.createElement('input');
+                inp.type = 'number'; inp.id = id; inp.value = value; inp.min = min || '0';
+                Object.assign(inp.style, { width: '100px', padding: '4px 8px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '13px' });
+                wrap.appendChild(lbl); wrap.appendChild(inp);
+                return wrap;
+            };
+
+            // ---- 导出模式切换 Tab ----
+            const modeTabs = document.createElement('div');
+            Object.assign(modeTabs.style, { padding: '8px 20px', borderBottom: '1px solid #f0f0f0', display: 'flex', gap: '6px' });
+
+            const modeDateSection = document.createElement('div');
+            const modeOffsetSection = document.createElement('div');
+
+            const setModeUI = (mode) => {
+                modeDateSection.style.display = mode === 'date' ? 'block' : 'none';
+                modeOffsetSection.style.display = mode === 'offset' ? 'block' : 'none';
+                [tabDate, tabOffset].forEach(t => {
+                    const active = t.dataset.mode === mode;
+                    t.style.backgroundColor = active ? btnColor : '#f0f0f0';
+                    t.style.color = active ? '#fff' : '#666';
+                    t.style.fontWeight = active ? '600' : '400';
+                });
+            };
+
+            const tabDate = document.createElement('div');
+            tabDate.textContent = '📅 按日期'; tabDate.dataset.mode = 'date';
+            Object.assign(tabDate.style, { flex: '1', textAlign: 'center', padding: '6px 0', cursor: 'pointer', fontSize: '13px', borderRadius: '6px', transition: 'all 0.15s', userSelect: 'none' });
+            tabDate.onclick = () => setModeUI('date');
+
+            const tabOffset = document.createElement('div');
+            tabOffset.textContent = '🔢 按偏移'; tabOffset.dataset.mode = 'offset';
+            Object.assign(tabOffset.style, { flex: '1', textAlign: 'center', padding: '6px 0', cursor: 'pointer', fontSize: '13px', borderRadius: '6px', transition: 'all 0.15s', userSelect: 'none' });
+            tabOffset.onclick = () => setModeUI('offset');
+
+            modeTabs.appendChild(tabDate);
+            modeTabs.appendChild(tabOffset);
+            panel.appendChild(modeTabs);
+
+            // ========== 按日期模式 ==========
+            Object.assign(modeDateSection.style, { padding: '12px 20px', borderBottom: '1px solid #f0f0f0' });
+
+            let dateFromInp, dateToInp;
+            const dateRow = document.createElement('div');
+            Object.assign(dateRow.style, { display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '8px' });
+            const createDateInput = (id, label) => {
+                const wrap = document.createElement('div');
+                Object.assign(wrap.style, { display: 'flex', alignItems: 'center', gap: '6px' });
+                const lbl = document.createElement('span');
+                lbl.textContent = label;
+                Object.assign(lbl.style, { fontSize: '12px', color: '#666', width: '56px', flexShrink: '0' });
+                const inp = document.createElement('input');
+                inp.type = 'date'; inp.id = id;
+                Object.assign(inp.style, { flex: '1', padding: '4px 8px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '13px' });
+                wrap.appendChild(lbl); wrap.appendChild(inp);
+                if (id === 'exp-date-from') dateFromInp = inp;
+                if (id === 'exp-date-to') dateToInp = inp;
+                return wrap;
+            };
+            dateRow.appendChild(createDateInput('exp-date-from', '起始'));
+            dateRow.appendChild(createDateInput('exp-date-to', '结束'));
+            modeDateSection.appendChild(dateRow);
+
+            const dateSelectRow = document.createElement('div');
+            Object.assign(dateSelectRow.style, { display: 'flex', gap: '8px' });
+
+            const quickSel = document.createElement('select');
+            quickSel.id = 'exp-quick';
+            Object.assign(quickSel.style, { flex: '1', padding: '4px 4px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '12px', color: '#666' });
+            ['近一周','近一月','近一年','全部'].forEach((opt, i) => { const o = document.createElement('option'); o.value = i; o.textContent = opt; quickSel.appendChild(o); });
+            dateSelectRow.appendChild(quickSel);
+
+            const granSel = document.createElement('select');
+            granSel.id = 'exp-gran';
+            Object.assign(granSel.style, { flex: '1', padding: '4px 4px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '12px', color: '#666' });
+            ['每天','每周','每月','全部','每个单独文件'].forEach(opt => { const o = document.createElement('option'); o.value = opt; o.textContent = opt; granSel.appendChild(o); });
+            dateSelectRow.appendChild(granSel);
+            modeDateSection.appendChild(dateSelectRow);
+            panel.appendChild(modeDateSection);
+
+            // 快捷选择逻辑 + 默认日期（近一年）
+            const today = new Date();
+            const fmtDate = d => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+            if (dateFromInp) dateFromInp.value = fmtDate(new Date(today.getFullYear()-1, today.getMonth(), today.getDate()));
+            if (dateToInp)   dateToInp.value   = fmtDate(today);
+            quickSel.onchange = () => {
+                const now = new Date(); let from;
+                switch (quickSel.value) {
+                    case '0': from = new Date(now.getTime()-7*864e5); break;
+                    case '1': from = new Date(now.getTime()-30*864e5); break;
+                    case '2': from = new Date(now.getFullYear()-1, now.getMonth(), now.getDate()); break;
+                    case '3': from = new Date('2010-01-01'); break;
+                }
+                if (dateFromInp) dateFromInp.value = fmtDate(from);
+                if (dateToInp)   dateToInp.value   = fmtDate(now);
+            };
+
+            // ========== 按偏移模式 ==========
+            Object.assign(modeOffsetSection.style, { padding: '12px 20px', borderBottom: '1px solid #f0f0f0', display: 'none' });
+
+            const offsetRow = document.createElement('div');
+            Object.assign(offsetRow.style, { display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '8px' });
+            offsetRow.appendChild(createNumInput('exp-offset', '起始偏移', '0', '0'));
+            offsetRow.appendChild(createNumInput('exp-limit', '每页数量', '20', '1'));
+            offsetRow.appendChild(createNumInput('exp-max', '最多条数', '0', '0'));
+            modeOffsetSection.appendChild(offsetRow);
+
+            const offsetSaveRow = document.createElement('div');
+            Object.assign(offsetSaveRow.style, { display: 'flex', alignItems: 'center', gap: '6px' });
+            const offsetSaveLbl = document.createElement('span');
+            offsetSaveLbl.textContent = '文件保存';
+            Object.assign(offsetSaveLbl.style, { fontSize: '12px', color: '#666', width: '56px', flexShrink: '0' });
+            const offsetSaveSel = document.createElement('select');
+            offsetSaveSel.id = 'exp-offset-save';
+            Object.assign(offsetSaveSel.style, { flex: '1', padding: '4px 4px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '12px', color: '#666' });
+            ['每批一个文件','合并为一个文件','每个单独文件'].forEach(opt => { const o = document.createElement('option'); o.value = opt; o.textContent = opt; offsetSaveSel.appendChild(o); });
+            offsetSaveRow.appendChild(offsetSaveLbl);
+            offsetSaveRow.appendChild(offsetSaveSel);
+            modeOffsetSection.appendChild(offsetSaveRow);
+
+            const offsetHint = document.createElement('div');
+            offsetHint.textContent = 'offset=0 从头开始 · 最多条数=0 不限制';
+            Object.assign(offsetHint.style, { fontSize: '11px', color: '#999', marginTop: '6px' });
+            modeOffsetSection.appendChild(offsetHint);
+            panel.appendChild(modeOffsetSection);
+
+            // 问题页不支持按日期导出，隐藏日期 Tab 并固定为偏移模式
+            if (this.mode === 'question') {
+                modeTabs.style.display = 'none';
+                modeDateSection.style.display = 'none';
+                modeOffsetSection.style.display = 'block';
+            } else {
+                setModeUI('date');
+            }
+
             // ---- 进度区 ----
             const progressDiv = document.createElement('div');
             Object.assign(progressDiv.style, { padding: '12px 20px', display: 'none' });
@@ -218,9 +364,6 @@
             const btnDiv = document.createElement('div');
             Object.assign(btnDiv.style, { padding: '12px 20px 16px' });
 
-            const btnColor = this.mode === 'question' ? '#7B2FF7' : '#0066FF';
-            const btnHover = this.mode === 'question' ? '#6622cc' : '#0052cc';
-
             const exportBtn = document.createElement('button');
             exportBtn.textContent = '🚀 开始导出';
             Object.assign(exportBtn.style, {
@@ -231,8 +374,13 @@
             exportBtn.onmouseenter = () => { if (!exportBtn.disabled) exportBtn.style.backgroundColor = btnHover; };
             exportBtn.onmouseleave = () => { if (!exportBtn.disabled) exportBtn.style.backgroundColor = btnColor; };
             exportBtn.onclick = () => {
-                if (this.mode === 'person') this.startPersonExport();
-                else this.startQuestionExport();
+                if (this.mode === 'person') {
+                    // 判断当前是「按日期」还是「按偏移」模式
+                    if (modeDateSection.style.display !== 'none') this.startDateExport();
+                    else this.startPersonExport();
+                } else {
+                    this.startQuestionExport();
+                }
             };
             btnDiv.appendChild(exportBtn);
 
@@ -306,6 +454,15 @@
             const expPins = document.getElementById('exp-pins').checked;
             CONFIG.linkStyle = (document.querySelector('input[name="link-style"]:checked') || {}).value || 'obsidian';
 
+            // 读取手动 offset/limit/max
+            const startOffset = parseInt(document.getElementById('exp-offset')?.value) || 0;
+            const batchLimit = parseInt(document.getElementById('exp-limit')?.value) || 20;
+            const maxItems = parseInt(document.getElementById('exp-max')?.value) || 0;
+            const offsetSaveMode = document.getElementById('exp-offset-save')?.value || '每批一个文件';
+            const mergeMode = offsetSaveMode === '合并为一个文件';
+            const singleMode = offsetSaveMode === '每个单独文件';
+            const mergedAnswers = [], mergedArticles = [], mergedPins = [];
+
             if (!expAnswers && !expArticles && !expPins) {
                 alert('请至少选择一种内容类型！'); return;
             }
@@ -322,67 +479,209 @@
                 const userInfo = await userResp.json();
                 const authorName = userInfo.name || this.urlToken;
 
-                const totalTasks =
-                    (expAnswers ? (userInfo.answer_count || 0) : 0) +
-                    (expArticles ? (userInfo.articles_count || 0) : 0) +
-                    (expPins ? (userInfo.pins_count || 0) : 0);
-                let processed = 0;
+                const allFailedOffsets = [];
 
-                const allAnswers = [], allArticles = [], allPins = [];
+                // ---- 按实际数据量动态分配进度条区间 ----
+                // 先以 userInfo 的预估值初始化，后续用 API 返回的真实 totals 修正
+                const estA = expAnswers ? (userInfo.answer_count || 0) : 0;
+                const estR = expArticles ? (userInfo.articles_count || 0) : 0;
+                const estP = expPins     ? (userInfo.pins_count || 0) : 0;
+                const estTotal = estA + estR + estP || 1;
+                let   pA = 0, pR = 0, pP = 96;          // 进度条分段终点（会动态修正）
 
-                // ---- 回答 ----
+                const recalcRanges = (realA, realR, realP) => {
+                    const tot = (realA || estA) + (realR || estR) + (realP || estP) || 1;
+                    pA = Math.round((realA || estA) / tot * 96);
+                    pR = Math.round(((realA || estA) + (realR || estR)) / tot * 96);
+                    pP = 96;
+                };
+                recalcRanges(estA, estR, estP);
+
+                // ---- 导出回答（分批输出文件） ----
                 if (expAnswers && !this.aborted) {
-                    const total = userInfo.answer_count || '?';
-                    this.setProgress(0, '正在导出回答...', '0 / ' + total);
-                    const items = await this.fetchAllPaged(
-                        '/api/v4/members/' + this.urlToken + '/answers',
-                        { include: 'data[*].content,voteup_count,created_time,updated_time,comment_count,question.title', limit: 20, sort_by: 'created' },
-                        (c) => { processed++; this.setProgress(Math.min(processed/totalTasks*100,100).toFixed(1), '正在导出回答...', c+' / '+total); }
+                    let displayTotal = estA > 0 ? estA : '?';
+                    this.setProgress(0, '正在导出回答...', '0 / ' + displayTotal);
+                    const answerParams = { include: 'data[*].content,voteup_count,created_time,updated_time,comment_count,question.title', limit: batchLimit, sort_by: 'created' };
+                    const answerBase = '/api/v4/members/' + this.urlToken + '/answers';
+
+                    const result = await this.fetchAllPaged(
+                        answerBase, answerParams,
+                        (c) => {
+                            // 分母永不低于分子，避免出现 6892/6643
+                            const denom = (typeof displayTotal === 'number' && displayTotal > 0)
+                                ? Math.max(displayTotal, c) : c;
+                            const dispDenom = (typeof displayTotal === 'number' && displayTotal > 0)
+                                ? Math.max(displayTotal, c) : '?';
+                            this.setProgress(
+                                Math.min(c / Math.max(denom, 1) * pA, pA).toFixed(1),
+                                '正在导出回答...',
+                                c + ' / ' + dispDenom
+                            );
+                        },
+                        (batch, batchIdx) => {
+                            if (mergeMode) { mergedAnswers.push(...batch); return; }
+                            if (singleMode) { this.downloadSingleItems(batch, '回答', authorName, userInfo); return; }
+                            const firstDate = batch.length > 0 ? this.formatDate(batch[0].created_time) : '未知';
+                            const startNum = startOffset + batchIdx * batchLimit + 1;
+                            const endNum = startNum + batch.length - 1;
+                            const md = this.genPersonAnswerBatchMarkdown(authorName, userInfo, batch, batchIdx, startNum, endNum);
+                            const filename = this.safeFilename(authorName + '_回答_' + firstDate + '_' + startNum + '-' + endNum);
+                            this.downloadFile(md, filename);
+                        },
+                        startOffset, maxItems
                     );
-                    allAnswers.push(...items);
-                    this.stats.answers = allAnswers.length;
+                    // 用 API 返回的真实总数修正
+                    if (result.totals > estA) { displayTotal = result.totals; recalcRanges(result.totals, estR, estP); }
+                    this.stats.answers = result.items.length;
+                    result.failedOffsets.forEach(fo => allFailedOffsets.push({ type: '回答', baseUrl: answerBase, params: answerParams, offset: fo.offset, limit: fo.limit }));
                 }
 
-                // ---- 文章 ----
+                // ---- 导出文章（分批输出文件） ----
                 if (expArticles && !this.aborted) {
-                    const total = userInfo.articles_count || '?';
-                    this.setProgress((processed/totalTasks*100).toFixed(1), '正在导出文章...', '0 / '+total);
-                    const items = await this.fetchAllPaged(
-                        '/api/v4/members/' + this.urlToken + '/articles',
-                        { include: 'data[*].content,voteup_count,created,updated,comment_count,title', limit: 20, sort_by: 'created' },
-                        (c) => { processed++; this.setProgress(Math.min(processed/totalTasks*100,100).toFixed(1), '正在导出文章...', c+' / '+total); }
+                    let displayTotal = estR > 0 ? estR : '?';
+                    this.setProgress(pA, '正在导出文章...', '0 / ' + displayTotal);
+                    const articleParams = { include: 'data[*].content,voteup_count,created,updated,comment_count,title', limit: batchLimit, sort_by: 'created' };
+                    const articleBase = '/api/v4/members/' + this.urlToken + '/articles';
+
+                    const result = await this.fetchAllPaged(
+                        articleBase, articleParams,
+                        (c) => {
+                            const denom = (typeof displayTotal === 'number' && displayTotal > 0)
+                                ? Math.max(displayTotal, c) : c;
+                            const dispDenom = (typeof displayTotal === 'number' && displayTotal > 0)
+                                ? Math.max(displayTotal, c) : '?';
+                            const segLen = pR - pA;
+                            this.setProgress(
+                                (pA + Math.min(c / Math.max(denom, 1) * segLen, segLen)).toFixed(1),
+                                '正在导出文章...',
+                                c + ' / ' + dispDenom
+                            );
+                        },
+                        (batch, batchIdx) => {
+                            if (mergeMode) { mergedArticles.push(...batch); return; }
+                            if (singleMode) { this.downloadSingleItems(batch, '文章', authorName, userInfo); return; }
+                            const firstDate = batch.length > 0 ? this.formatDate(batch[0].created) : '未知';
+                            const startNum = startOffset + batchIdx * batchLimit + 1;
+                            const endNum = startNum + batch.length - 1;
+                            const md = this.genPersonArticleBatchMarkdown(authorName, userInfo, batch, batchIdx, startNum, endNum);
+                            const filename = this.safeFilename(authorName + '_文章_' + firstDate + '_' + startNum + '-' + endNum);
+                            this.downloadFile(md, filename);
+                        },
+                        startOffset, maxItems
                     );
-                    allArticles.push(...items);
-                    this.stats.articles = allArticles.length;
+                    if (result.totals > estR) { displayTotal = result.totals; recalcRanges(this.stats.answers || estA, result.totals, estP); }
+                    this.stats.articles = result.items.length;
+                    result.failedOffsets.forEach(fo => allFailedOffsets.push({ type: '文章', baseUrl: articleBase, params: articleParams, offset: fo.offset, limit: fo.limit }));
                 }
 
-                // ---- 想法 ----
+                // ---- 导出想法（分批输出文件） ----
                 if (expPins && !this.aborted) {
-                    const total = userInfo.pins_count || '?';
-                    this.setProgress((processed/totalTasks*100).toFixed(1), '正在导出想法...', '0 / '+total);
-                    const items = await this.fetchAllPaged(
-                        '/api/v4/members/' + this.urlToken + '/pins',
-                        { limit: 20 },
-                        (c) => { processed++; this.setProgress(Math.min(processed/totalTasks*100,100).toFixed(1), '正在导出想法...', c+' / '+total); }
+                    let displayTotal = estP > 0 ? estP : '?';
+                    this.setProgress(pR, '正在导出想法...', '0 / ' + displayTotal);
+                    const pinParams = { limit: batchLimit };
+                    const pinBase = '/api/v4/members/' + this.urlToken + '/pins';
+
+                    const result = await this.fetchAllPaged(
+                        pinBase, pinParams,
+                        (c) => {
+                            const denom = (typeof displayTotal === 'number' && displayTotal > 0)
+                                ? Math.max(displayTotal, c) : c;
+                            const dispDenom = (typeof displayTotal === 'number' && displayTotal > 0)
+                                ? Math.max(displayTotal, c) : '?';
+                            const segLen = pP - pR;
+                            this.setProgress(
+                                (pR + Math.min(c / Math.max(denom, 1) * segLen, segLen)).toFixed(1),
+                                '正在导出想法...',
+                                c + ' / ' + dispDenom
+                            );
+                        },
+                        (batch, batchIdx) => {
+                            if (mergeMode) { mergedPins.push(...batch); return; }
+                            if (singleMode) { this.downloadSingleItems(batch, '想法', authorName, userInfo); return; }
+                            const firstDate = batch.length > 0 ? this.formatDate(batch[0].created) : '未知';
+                            const startNum = startOffset + batchIdx * batchLimit + 1;
+                            const endNum = startNum + batch.length - 1;
+                            const md = this.genPersonPinBatchMarkdown(authorName, userInfo, batch, batchIdx, startNum, endNum);
+                            const filename = this.safeFilename(authorName + '_想法_' + firstDate + '_' + startNum + '-' + endNum);
+                            this.downloadFile(md, filename);
+                        },
+                        startOffset, maxItems
                     );
-                    allPins.push(...items);
-                    this.stats.pins = allPins.length;
+                    if (result.totals > estP) { displayTotal = result.totals; }
+                    this.stats.pins = result.items.length;
+                    result.failedOffsets.forEach(fo => allFailedOffsets.push({ type: '想法', baseUrl: pinBase, params: pinParams, offset: fo.offset, limit: fo.limit }));
                 }
 
                 if (this.aborted) { this.setProgress(0, '导出已取消', ''); this.resetUI(2000); return; }
 
-                this.setProgress(98, '正在生成 Markdown...', '');
-                const md = this.genPersonMarkdown(authorName, userInfo, allAnswers, allArticles, allPins);
-                this.downloadFile(md, authorName + '_内容合集');
+                // ---- 重试失败批次 ----
+                if (allFailedOffsets.length > 0 && !this.aborted) {
+                    this.setProgress(96, '正在重试失败的批次...', allFailedOffsets.length + ' 个待重试');
+                    const stillFailed = [];
 
-                this.setProgress(100, '✅ 导出完成！',
-                    '回答: '+this.stats.answers+' | 文章: '+this.stats.articles+' | 想法: '+this.stats.pins);
+                    for (const fo of allFailedOffsets) {
+                        if (this.aborted) break;
+                        const retryResult = await this.retryFailedBatches(
+                            fo.baseUrl, fo.params, [{ offset: fo.offset, limit: fo.limit }],
+                            null,
+                            mergeMode ? null : (batch) => {
+                                if (singleMode) { this.downloadSingleItems(batch, fo.type, authorName, userInfo); return; }
+                                const firstDate = batch.length > 0 ? this.formatDate(batch[0].created_time || batch[0].created) : '未知';
+                                const md = fo.type === '回答'
+                                    ? this.genPersonAnswerBatchMarkdown(authorName, userInfo, batch, -1, fo.offset + 1, fo.offset + batch.length)
+                                    : fo.type === '文章'
+                                        ? this.genPersonArticleBatchMarkdown(authorName, userInfo, batch, -1, fo.offset + 1, fo.offset + batch.length)
+                                        : this.genPersonPinBatchMarkdown(authorName, userInfo, batch, -1, fo.offset + 1, fo.offset + batch.length);
+                                const filename = this.safeFilename(authorName + '_' + fo.type + '_补_' + firstDate + '_' + (fo.offset + 1) + '-' + (fo.offset + batch.length));
+                                this.downloadFile(md, filename);
+                            }
+                        );
+                        if (retryResult.stillFailed.length > 0) {
+                            stillFailed.push(fo);
+                        } else {
+                            const key = fo.type === '回答' ? 'answers' : fo.type === '文章' ? 'articles' : 'pins';
+                            this.stats[key] += retryResult.items.length;
+                            // 合并模式：把重试恢复的条目也加入累积数组
+                            if (mergeMode) {
+                                if (fo.type === '回答') mergedAnswers.push(...retryResult.items);
+                                else if (fo.type === '文章') mergedArticles.push(...retryResult.items);
+                                else mergedPins.push(...retryResult.items);
+                            }
+                        }
+                    }
+
+                    // 合并模式：生成合集文件
+                    if (mergeMode && !this.aborted) {
+                        this.setProgress(98, '正在生成合集 Markdown...', '');
+                        const md = this.genPersonMarkdown(authorName, userInfo, mergedAnswers, mergedArticles, mergedPins);
+                        this.downloadFile(md, authorName + '_内容合集');
+                    }
+
+                    if (stillFailed.length > 0) {
+                        console.warn('以下批次最终失败:', stillFailed.map(f => f.type + ' offset=' + f.offset).join(', '));
+                        this.setProgress(100, '⚠️ 部分完成（' + stillFailed.length + ' 批失败）',
+                            '回答: ' + this.stats.answers + ' | 文章: ' + this.stats.articles + ' | 想法: ' + this.stats.pins +
+                            ' | 失败: ' + stillFailed.map(f => f.type + '#' + f.offset).join(', '));
+                    } else {
+                        this.setProgress(100, '✅ 导出完成！',
+                            '回答: ' + this.stats.answers + ' | 文章: ' + this.stats.articles + ' | 想法: ' + this.stats.pins);
+                    }
+                } else {
+                    // 合并模式：无失败批次，直接生成合集
+                    if (mergeMode && !this.aborted) {
+                        this.setProgress(98, '正在生成合集 Markdown...', '');
+                        const md = this.genPersonMarkdown(authorName, userInfo, mergedAnswers, mergedArticles, mergedPins);
+                        this.downloadFile(md, authorName + '_内容合集');
+                    }
+                    this.setProgress(100, '✅ 导出完成！',
+                        '回答: ' + this.stats.answers + ' | 文章: ' + this.stats.articles + ' | 想法: ' + this.stats.pins);
+                }
 
             } catch (err) {
                 console.error('导出失败:', err);
                 this.setProgress(0, '❌ 导出失败: ' + err.message, '');
             } finally {
-                this.resetUI(5000);
+                this.resetUI(8000);
             }
         },
 
@@ -396,6 +695,11 @@
             const includeDetail = document.getElementById('exp-q-detail') ? document.getElementById('exp-q-detail').checked : true;
             CONFIG.linkStyle = (document.querySelector('input[name="link-style"]:checked') || {}).value || 'obsidian';
 
+            // 读取手动 offset/limit/max
+            const startOffset = parseInt(document.getElementById('exp-offset')?.value) || 0;
+            const batchLimit = parseInt(document.getElementById('exp-limit')?.value) || 20;
+            const maxItems = parseInt(document.getElementById('exp-max')?.value) || 0;
+
             this.lockUI();
             this.setProgress(0, '正在获取问题信息...', '');
 
@@ -408,81 +712,829 @@
                 if (!qResp.ok) throw new Error('获取问题信息失败: ' + qResp.status);
                 const qInfo = await qResp.json();
                 const qTitle = qInfo.title || '未知问题';
-                const totalAnswers = qInfo.answer_count || 0;
+                let displayTotal = qInfo.answer_count || 0;
+                const totalDisplay = displayTotal > 0 ? displayTotal : '?';
 
-                this.setProgress(5, '正在导出回答...', '0 / ' + totalAnswers);
+                this.setProgress(5, '正在导出回答...', '0 / ' + totalDisplay);
 
-                // 获取所有回答
-                const allAnswers = await this.fetchAllPaged(
-                    '/api/v4/questions/' + this.questionId + '/answers',
-                    {
-                        include: 'data[*].content,voteup_count,created_time,updated_time,comment_count,author.name,author.headline,author.url_token',
-                        limit: 20,
-                        sort_by: sortBy
-                    },
+                // 获取所有回答（分批输出文件）
+                const answerParams = {
+                    include: 'data[*].content,voteup_count,created_time,updated_time,comment_count,author.name,author.headline,author.url_token',
+                    limit: batchLimit,
+                    sort_by: sortBy
+                };
+                const answerBase = '/api/v4/questions/' + this.questionId + '/answers';
+
+                const result = await this.fetchAllPaged(
+                    answerBase, answerParams,
                     (count) => {
-                        const pct = totalAnswers > 0 ? Math.min(5 + (count / totalAnswers) * 90, 95) : 50;
-                        this.setProgress(pct.toFixed(1), '正在导出回答...', count + ' / ' + totalAnswers);
-                    }
+                        // 分母永不低于分子，避免出现数字倒挂
+                        const denom = displayTotal > 0 ? Math.max(displayTotal, count) : count;
+                        const dispDenom = displayTotal > 0 ? Math.max(displayTotal, count) : '?';
+                        const pct = denom > 0 ? Math.min(5 + (count / denom) * 85, 90) : 50;
+                        this.setProgress(pct.toFixed(1), '正在导出回答...', count + ' / ' + dispDenom);
+                    },
+                    (batch, batchIdx) => {
+                        const firstDate = batch.length > 0 ? this.formatDate(batch[0].created_time) : '未知';
+                        const startNum = startOffset + batchIdx * batchLimit + 1;
+                        const endNum = startNum + batch.length - 1;
+                        const md = this.genQuestionAnswerBatchMarkdown(qInfo, batch, batchIdx, startNum, endNum, includeDetail, sortBy);
+                        const filename = this.safeFilename(qTitle + '_回答_' + firstDate + '_' + startNum + '-' + endNum);
+                        this.downloadFile(md, filename);
+                    },
+                    startOffset, maxItems
                 );
-                this.stats.answers = allAnswers.length;
+                // 用 API 返回的真实总数修正
+                if (result.totals > displayTotal) displayTotal = result.totals;
+                this.stats.answers = result.items.length;
 
                 if (this.aborted) { this.setProgress(0, '导出已取消', ''); this.resetUI(2000); return; }
 
-                this.setProgress(96, '正在生成 Markdown...', '');
-                const md = this.genQuestionMarkdown(qInfo, allAnswers, includeDetail, sortBy);
-                this.downloadFile(md, qTitle + '_' + allAnswers.length + '个回答');
+                // ---- 重试失败批次 ----
+                if (result.failedOffsets.length > 0 && !this.aborted) {
+                    this.setProgress(92, '正在重试失败的批次...', result.failedOffsets.length + ' 个待重试');
 
-                this.setProgress(100, '✅ 导出完成！', '共 ' + allAnswers.length + ' 个回答');
+                    const retryResult = await this.retryFailedBatches(
+                        answerBase, answerParams, result.failedOffsets,
+                        null,
+                        (batch, _idx, retryOffset) => {
+                            const firstDate = batch.length > 0 ? this.formatDate(batch[0].created_time) : '未知';
+                            const startNum = (retryOffset != null ? retryOffset : 0) + 1;
+                            const endNum = startNum + batch.length - 1;
+                            const md = this.genQuestionAnswerBatchMarkdown(qInfo, batch, -1, startNum, endNum, includeDetail, sortBy);
+                            const filename = this.safeFilename(qTitle + '_回答_补_' + firstDate + '_' + startNum + '-' + endNum);
+                            this.downloadFile(md, filename);
+                        }
+                    );
+
+                    this.stats.answers += retryResult.items.length;
+
+                    if (retryResult.stillFailed.length > 0) {
+                        console.warn('以下批次最终失败:', retryResult.stillFailed.map(f => 'offset=' + f.offset).join(', '));
+                        this.setProgress(100, '⚠️ 部分完成（' + retryResult.stillFailed.length + ' 批失败）',
+                            '共导出 ' + this.stats.answers + ' 个回答 | 失败 offset: ' + retryResult.stillFailed.map(f => f.offset).join(', '));
+                    } else {
+                        this.setProgress(100, '✅ 导出完成！', '共 ' + this.stats.answers + ' 个回答');
+                    }
+                } else {
+                    this.setProgress(100, '✅ 导出完成！', '共 ' + this.stats.answers + ' 个回答');
+                }
 
             } catch (err) {
                 console.error('导出失败:', err);
                 this.setProgress(0, '❌ 导出失败: ' + err.message, '');
             } finally {
-                this.resetUI(5000);
+                this.resetUI(8000);
             }
         },
 
-        // ==================== API 分页请求 ====================
-        fetchAllPaged: async function(baseUrl, params, onItem) {
+        // ==================== API 分页请求（支持重试、断点续传、分批回调） ====================
+        fetchAllPaged: async function(baseUrl, params, onItem, onBatch, startOffset, maxItems) {
             const allItems = [];
-            let offset = 0;
+            const failedOffsets = [];
+            let offset = (startOffset !== undefined) ? startOffset : 0;
             const limit = params.limit || 20;
+            const max = (maxItems > 0) ? maxItems : Infinity;
             let count = 0;
+            let batchIndex = 0;
+            let reachedEnd = false;
 
-            while (true) {
+            while (!reachedEnd) {
                 if (this.aborted) break;
 
-                const urlParams = new URLSearchParams({ ...params, offset: String(offset), limit: String(limit) });
-                const resp = await fetch(baseUrl + '?' + urlParams.toString());
+                let batchData = null;
+                let success = false;
 
-                if (!resp.ok) {
-                    if (resp.status === 429) {
-                        console.warn('限流，等待 3 秒...');
-                        await new Promise(r => setTimeout(r, 3000));
-                        continue;
+                // ---- 最多重试 maxRetries 次（429 限流最多额外等待 5 次） ----
+                let attempt = 0, rateLimitCount = 0;
+                while (attempt <= CONFIG.maxRetries) {
+                    try {
+                        const urlParams = new URLSearchParams({ ...params, offset: String(offset), limit: String(limit) });
+                        const resp = await fetch(baseUrl + '?' + urlParams.toString());
+
+                        if (!resp.ok) {
+                            if (resp.status === 429) {
+                                if (++rateLimitCount > 5) throw new Error('限流超过 5 次，放弃本批次');
+                                console.warn('限流(' + rateLimitCount + '/5)，等待 5 秒...');
+                                await new Promise(r => setTimeout(r, 5000));
+                                continue;
+                            }
+                            throw new Error('HTTP ' + resp.status);
+                        }
+
+                        batchData = await resp.json();
+                        success = true;
+                        break;
+                    } catch (err) {
+                        console.warn('请求失败 offset=' + offset + ', 第' + (attempt + 1) + '次尝试: ' + err.message);
+                        attempt++;
+                        if (attempt <= CONFIG.maxRetries) {
+                            await new Promise(r => setTimeout(r, CONFIG.retryDelay * attempt));
+                        }
                     }
-                    console.warn('请求失败 offset=' + offset + ' status=' + resp.status);
+                }
+
+                if (!success || !batchData) {
+                    console.warn('offset=' + offset + ' 最终失败，记录待末尾重试');
+                    failedOffsets.push({ offset, limit });
+                    offset += limit;
+                    await new Promise(r => setTimeout(r, CONFIG.requestDelay));
+                    continue;
+                }
+
+                if (!batchData.data || batchData.data.length === 0) {
+                    reachedEnd = true;
                     break;
                 }
 
-                const data = await resp.json();
-                if (!data.data || data.data.length === 0) break;
-
-                for (const item of data.data) {
+                const batch = [];
+                for (const item of batchData.data) {
                     allItems.push(item);
+                    batch.push(item);
                     count++;
                     if (onItem) onItem(count);
+                    if (count >= max) break;  // 达到用户指定的最大条数
                 }
 
-                if (data.paging && data.paging.is_end) break;
+                // 首個批次：記錄 API 返回的真實總數（paging.totals 比 userInfo.*_count 準確）
+                if (batchIndex === 0 && batchData.paging && batchData.paging.totals) {
+                    allItems._apiTotal = batchData.paging.totals;
+                }
+
+                if (onBatch) onBatch(batch, batchIndex, offset);
+                batchIndex++;
+
+                if (count >= max) { reachedEnd = true; break; }  // 达到上限，停止
+                if (batchData.paging && batchData.paging.is_end) {
+                    reachedEnd = true;
+                    break;
+                }
                 offset += limit;
                 await new Promise(r => setTimeout(r, CONFIG.requestDelay));
             }
-            return allItems;
+
+            // 用 API 真實總數，fallback 到實際下載數量
+            const apiTotal = allItems._apiTotal || allItems.length;
+            delete allItems._apiTotal;
+            return { items: allItems, failedOffsets, totals: apiTotal };
         },
 
-        // ==================== 答主页 Markdown 生成 ====================
+        // ==================== 失败批次重试 ====================
+        retryFailedBatches: async function(baseUrl, params, failedOffsets, onItem, onBatch) {
+            const recoveredItems = [];
+            const stillFailed = [];
+
+            for (const fo of failedOffsets) {
+                if (this.aborted) break;
+
+                let batchData = null;
+                let success = false;
+
+                let attempt = 0, rateLimitCount = 0;
+                while (attempt <= CONFIG.maxRetries) {
+                    try {
+                        const urlParams = new URLSearchParams({ ...params, offset: String(fo.offset), limit: String(fo.limit) });
+                        const resp = await fetch(baseUrl + '?' + urlParams.toString());
+
+                        if (!resp.ok) {
+                            if (resp.status === 429) {
+                                if (++rateLimitCount > 5) throw new Error('重试限流超过 5 次');
+                                await new Promise(r => setTimeout(r, 5000));
+                                continue;
+                            }
+                            throw new Error('HTTP ' + resp.status);
+                        }
+
+                        batchData = await resp.json();
+                        success = true;
+                        break;
+                    } catch (err) {
+                        console.warn('重试失败 offset=' + fo.offset + ', 第' + (attempt + 1) + '次: ' + err.message);
+                        attempt++;
+                        if (attempt <= CONFIG.maxRetries) {
+                            await new Promise(r => setTimeout(r, CONFIG.retryDelay * 2 * attempt));
+                        }
+                    }
+                }
+
+                if (success && batchData && batchData.data && batchData.data.length > 0) {
+                    const batch = [];
+                    for (const item of batchData.data) {
+                        recoveredItems.push(item);
+                        batch.push(item);
+                        if (onItem) onItem(recoveredItems.length);
+                    }
+                    if (onBatch) onBatch(batch, -1, fo.offset);
+                } else {
+                    stillFailed.push(fo);
+                }
+
+                await new Promise(r => setTimeout(r, CONFIG.requestDelay));
+            }
+
+            return { items: recoveredItems, stillFailed };
+        },
+
+        // ==================== 二分查找日期边界 ====================
+        // 返回第一个 created_time < targetTs 的 offset（0-based）
+        // 若所有项都 >= targetTs，返回 total；若都 < targetTs，返回 0
+        binarySearchDate: async function(baseUrl, timeKey, targetTs) {
+            // 取第一条，获得总数和最新时间
+            let resp = await fetch(baseUrl + '?sort_by=created&offset=0&limit=1');
+            if (!resp.ok) throw new Error('二分查找失败: HTTP ' + resp.status);
+            const first = await resp.json();
+            if (!first.data || !first.data[0]) return { offset: 0, total: 0 };
+
+            const total = first.paging.totals;
+            const newest = first.data[0][timeKey];
+            // 目标比最新还新 → 所有项都 < targetTs → offset=0
+            if (targetTs > newest) return { offset: 0, total };
+
+            // 找实际最大 offset（容错：totals 可能偏大）
+            let hi = total - 1;
+            while (hi >= 0) {
+                resp = await fetch(baseUrl + '?sort_by=created&offset=' + hi + '&limit=1');
+                if (!resp.ok) { hi--; continue; }
+                const d = await resp.json();
+                if (d.data && d.data[0]) break;
+                hi--;
+            }
+            if (hi < 0) return { offset: 0, total };
+
+            // 二分：找第一个 time < targetTs 的位置
+            let lo = 0;
+            while (lo < hi) {
+                const mid = (lo + hi) >> 1;
+                resp = await fetch(baseUrl + '?sort_by=created&offset=' + mid + '&limit=1');
+                if (!resp.ok) { hi = mid; continue; }
+                const d = await resp.json();
+                if (!d.data || !d.data[0]) { hi = mid; continue; }
+                if (d.data[0][timeKey] >= targetTs) lo = mid + 1;
+                else hi = mid;
+            }
+            return { offset: lo, total };
+        },
+
+        // ==================== 按日期导出 ====================
+        startDateExport: async function() {
+            this.aborted = false;
+            this.stats = { answers: 0, articles: 0, pins: 0 };
+
+            const expAnswers  = document.getElementById('exp-answers').checked;
+            const expArticles = document.getElementById('exp-articles').checked;
+            const expPins     = document.getElementById('exp-pins').checked;
+            CONFIG.linkStyle  = (document.querySelector('input[name="link-style"]:checked') || {}).value || 'obsidian';
+
+            const dateFromRaw = document.getElementById('exp-date-from')?.value;
+            const dateToRaw   = document.getElementById('exp-date-to')?.value;
+            const granularity = document.getElementById('exp-gran')?.value || '每天';
+
+            if (!dateFromRaw || !dateToRaw) { alert('请填写起始和结束日期'); return; }
+            const tsFrom = new Date(dateFromRaw + 'T00:00:00+08:00').getTime() / 1000;
+            const tsTo   = new Date(dateToRaw   + 'T23:59:59+08:00').getTime() / 1000;
+            if (tsFrom > tsTo) { alert('起始日期不能晚于结束日期'); return; }
+
+            if (!expAnswers && !expArticles && !expPins) { alert('请至少选择一种内容类型！'); return; }
+
+            this.lockUI();
+            this.setProgress(0, '正在二分查找日期边界...', '');
+
+            try {
+                const userResp = await fetch(
+                    '/api/v4/members/' + this.urlToken +
+                    '?include=' + encodeURIComponent('name,headline')
+                );
+                const userInfo = userResp.ok ? await userResp.json() : {};
+                const authorName = userInfo.name || this.urlToken;
+
+                // 定义三种内容类型的配置
+                const types = [];
+                if (expAnswers)  types.push({ type: '回答', endpoint: 'answers', timeKey: 'created_time', params: { include: 'data[*].content,voteup_count,created_time,updated_time,comment_count,question.title', limit: 20, sort_by: 'created' } });
+                if (expArticles) types.push({ type: '文章', endpoint: 'articles', timeKey: 'created',       params: { include: 'data[*].content,voteup_count,created,updated,comment_count,title', limit: 20, sort_by: 'created' } });
+                if (expPins)     types.push({ type: '想法', endpoint: 'pins',     timeKey: 'created',       params: { limit: 20, sort_by: 'created' } });
+
+                const allItems = []; // { type, items[] }
+                const dateFailedOffsets = [];  // 收集日期导出中的失败 offset
+
+                for (let ti = 0; ti < types.length; ti++) {
+                    if (this.aborted) break;
+                    const t = types[ti];
+                    const baseUrl = '/api/v4/members/' + this.urlToken + '/' + t.endpoint;
+                    this.setProgress(10 + ti * 25, '正在定位「' + t.type + '」日期边界...', '');
+
+                    // 二分查找：找第一条 < tsFrom 的 offset → offsetEnd
+                    //          找第一条 < tsTo+1day 的 offset → offsetStart
+                    const r1 = await this.binarySearchDate(baseUrl, t.timeKey, tsFrom);
+                    const r2 = await this.binarySearchDate(baseUrl, t.timeKey, tsTo + 86400);
+                    const offsetStart = r2.offset; // 第一条 < tsTo+1day
+                    const offsetEnd   = r1.offset; // 第一条 < tsFrom
+                    const estCount = offsetEnd - offsetStart;
+
+                    if (estCount <= 0) {
+                        console.log(t.type + ': 该日期范围内无内容');
+                        continue;
+                    }
+
+                    this.setProgress(15 + ti * 25, '正在下载「' + t.type + '」(' + estCount + ' 条)...', '0 / ' + estCount);
+
+                    const result = await this.fetchAllPaged(
+                        baseUrl, t.params,
+                        (c) => {
+                            this.setProgress((15 + ti * 25 + Math.min(c / Math.max(estCount, 1) * 10, 10)).toFixed(1),
+                                '正在下载「' + t.type + '」', c + ' / ' + estCount);
+                        },
+                        null,  // 不分批输出，最后统一按日期分组
+                        offsetStart,
+                        estCount  // maxItems = 该日期范围内的条数
+                    );
+
+                    if (result.items.length > 0) {
+                        allItems.push({ type: t.type, timeKey: t.timeKey, items: result.items });
+                    }
+                    // 记录失败 offset 供末尾重试
+                    if (result.failedOffsets.length > 0) {
+                        result.failedOffsets.forEach(fo => dateFailedOffsets.push({ type: t.type, baseUrl, params: t.params, offset: fo.offset, limit: fo.limit }));
+                    }
+                    const key = t.type === '回答' ? 'answers' : t.type === '文章' ? 'articles' : 'pins';
+                    this.stats[key] = result.items.length;
+                }
+
+                if (this.aborted) { this.setProgress(0, '导出已取消', ''); this.resetUI(2000); return; }
+
+                // ---- 日期导出：重试失败批次 ----
+                if (dateFailedOffsets.length > 0 && !this.aborted) {
+                    this.setProgress(88, '正在重试失败的批次...', dateFailedOffsets.length + ' 个');
+                    for (const fo of dateFailedOffsets) {
+                        if (this.aborted) break;
+                        const retry = await this.retryFailedBatches(
+                            fo.baseUrl, fo.params, [{ offset: fo.offset, limit: fo.limit }],
+                            null, null  // 日期模式下重试不单独输出文件，追加到 allItems
+                        );
+                        if (retry.items.length > 0) {
+                            // 把重试恢复的条目追加到对应类型的 allItems 中
+                            let ct = allItems.find(x => x.type === fo.type);
+                            if (!ct) { ct = { type: fo.type, timeKey: fo.type === '回答' ? 'created_time' : 'created', items: [] }; allItems.push(ct); }
+                            ct.items.push(...retry.items);
+                            const key = fo.type === '回答' ? 'answers' : fo.type === '文章' ? 'articles' : 'pins';
+                            this.stats[key] += retry.items.length;
+                        }
+                        if (retry.stillFailed.length > 0) {
+                            console.warn('日期导出重试最终失败:', fo.type, fo.offset);
+                        }
+                    }
+                }
+
+                // ---- 按粒度分组并输出文件 ----
+                if (granularity === '每个单独文件') {
+                    this.setProgress(90, '正在生成独立文件...', '');
+                    let fileCount = 0;
+                    for (const ct of allItems) {
+                        for (const item of ct.items) {
+                            if (this.aborted) break;
+                            this.downloadSingleItems([item], ct.type, authorName, userInfo);
+                            fileCount++;
+                        }
+                    }
+                    const totalItems = allItems.reduce((s, ct) => s + ct.items.length, 0);
+                    this.setProgress(100, '导出完成',
+                        '回答:' + this.stats.answers + ' 文章:' + this.stats.articles + ' 想法:' + this.stats.pins +
+                        ' | 文件数:' + fileCount);
+                    return;
+                }
+
+                this.setProgress(90, '正在按日期分组生成文件...', '');
+                const getItemDate = (item, timeKey) => {
+                    const ts = item[timeKey];
+                    return ts ? new Date(ts * 1000) : null;
+                };
+                const dateStr = (d) => d ? this.formatDate(d.getTime() / 1000) : '未知';
+
+                // 收集所有分组
+                const groups = []; // { label, filenameDate, items: [{type, timeKey, item}] }
+                const addToGroup = (label, filenameDate, typedItem) => {
+                    let g = groups.find(x => x.label === label && x.type === typedItem.type);
+                    if (!g) {
+                        g = { label, filenameDate, type: typedItem.type, timeKey: typedItem.timeKey, items: [] };
+                        groups.push(g);
+                    }
+                    g.items.push(typedItem);
+                };
+
+                for (const ct of allItems) {
+                    for (const item of ct.items) {
+                        const d = getItemDate(item, ct.timeKey);
+                        if (!d) continue;
+                        let label, filenameDate;
+                        switch (granularity) {
+                            case '每天':
+                                label = dateStr(d);
+                                filenameDate = label;
+                                break;
+                            case '每周': {
+                                const startOfWeek = new Date(d);
+                                startOfWeek.setDate(d.getDate() - d.getDay());
+                                label = dateStr(startOfWeek) + ' 周';
+                                filenameDate = dateStr(startOfWeek);
+                                break;
+                            }
+                            case '每月':
+                                label = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+                                filenameDate = label;
+                                break;
+                            case '全部':
+                            default:
+                                label = '全部';
+                                filenameDate = dateStr(new Date(tsFrom * 1000)) + '_' + dateStr(new Date(tsTo * 1000));
+                                break;
+                        }
+                        addToGroup(label, filenameDate, { type: ct.type, timeKey: ct.timeKey, item });
+                    }
+                }
+
+                // 生成并下载每个分组的 Markdown
+                let fileCount = 0;
+                for (const g of groups) {
+                    if (this.aborted) break;
+                    let md;
+                    const genBatch = (batchIdx, startNum, endNum) => {
+                        const batchItems = g.items.map(x => x.item);
+                        if (g.type === '回答') return this.genPersonAnswerBatchMarkdown(authorName, userInfo, batchItems, 0, startNum, endNum);
+                        if (g.type === '文章') return this.genPersonArticleBatchMarkdown(authorName, userInfo, batchItems, 0, startNum, endNum);
+                        return this.genPersonPinBatchMarkdown(authorName, userInfo, batchItems, 0, startNum, endNum);
+                    };
+                    md = genBatch(0, 1, g.items.length);
+                    const filename = this.safeFilename(authorName + '_' + g.type + '_' + g.filenameDate);
+                    this.downloadFile(md, filename);
+                    fileCount++;
+                }
+
+                const totalItems = allItems.reduce((s, ct) => s + ct.items.length, 0);
+                this.setProgress(100, '✅ 导出完成！',
+                    '回答:' + this.stats.answers + ' 文章:' + this.stats.articles + ' 想法:' + this.stats.pins +
+                    ' | 文件数:' + fileCount);
+
+            } catch (err) {
+                console.error('日期导出失败:', err);
+                this.setProgress(0, '❌ 导出失败: ' + err.message, '');
+            } finally {
+                this.resetUI(8000);
+            }
+        },
+
+        // ==================== 工具函数 ====================
+        formatDate: function(ts) {
+            if (!ts) return '未知';
+            const d = new Date(ts * 1000);
+            return d.getFullYear() + '-' +
+                String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                String(d.getDate()).padStart(2, '0');
+        },
+
+        safeFilename: function(name) {
+            return name.replace(/[\\\/:*?"<>|]/g, '_').replace(/\s+/g, '_').substring(0, 200);
+        },
+
+        // 每个内容单独导出为一个文件
+        downloadSingleItems: function(batch, type, authorName, userInfo) {
+            for (const item of batch) {
+                const ts = item.created_time || item.created;
+                const date = ts ? this.formatDate(ts) : '未知';
+                let title = type === '回答' ? this.ansTitle(item) :
+                            type === '文章' ? (item.title || '无标题') :
+                            this.pinPreview(item);
+                const safeTitle = title.replace(/[\\\/:*?"<>|]/g, '_').replace(/\s+/g, '_').substring(0, 60);
+                const filename = this.safeFilename(authorName + '_' + type + '_' + date + '_' + safeTitle);
+                let md;
+                if (type === '回答') md = this.genPersonAnswerBatchMarkdown(authorName, userInfo, [item], 0, 1, 1);
+                else if (type === '文章') md = this.genPersonArticleBatchMarkdown(authorName, userInfo, [item], 0, 1, 1);
+                else md = this.genPersonPinBatchMarkdown(authorName, userInfo, [item], 0, 1, 1);
+                this.downloadFile(md, filename);
+            }
+        },
+
+        // ==================== 分批 Markdown 生成 ====================
+
+        /** 答主回答批次 */
+        genPersonAnswerBatchMarkdown: function(authorName, userInfo, answers, batchIdx, startNum, endNum) {
+            const L = [];
+            const now = new Date().toLocaleString('zh-CN');
+            const single = answers.length === 1;
+            const first = answers[0];
+            const firstDate = first ? this.formatDate(first.created_time) : '未知';
+
+            if (CONFIG.addFrontmatter) {
+                L.push('---');
+                if (single) {
+                    L.push('title: "' + this.ey(this.ansTitle(first)) + '"');
+                    L.push('author: "' + this.ey(authorName) + '"');
+                    L.push('source: ' + this.ansUrl(first));
+                    L.push('created_date: "' + firstDate + '"');
+                    if (first.updated_time) L.push('updated_date: "' + this.formatDate(first.updated_time) + '"');
+                } else {
+                    L.push('title: "' + this.ey(authorName) + ' - 回答 (' + startNum + '-' + endNum + ')"');
+                    L.push('author: "' + this.ey(authorName) + '"');
+                    L.push('source: https://www.zhihu.com/people/' + this.urlToken);
+                    L.push('batch: ' + (batchIdx + 1));
+                    L.push('range: "' + startNum + '-' + endNum + '"');
+                    L.push('first_date: "' + firstDate + '"');
+                }
+                L.push('export_date: "' + now + '"');
+                L.push('type: 回答');
+                L.push('tags:');
+                L.push('  - 知乎导出');
+                L.push('  - "' + this.ey(authorName) + '"');
+                L.push('---');
+                L.push('');
+            }
+
+            if (single) {
+                L.push('# ' + this.ansTitle(first));
+                L.push('');
+            } else {
+                L.push('# ' + authorName + ' · 回答 (' + startNum + '-' + endNum + ')');
+                L.push('');
+                if (CONFIG.useCallout) {
+                    L.push('> [!info] 批次信息');
+                    L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
+                    L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 篇');
+                    L.push('> **导出时间**：' + now);
+                } else {
+                    L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
+                    L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 篇');
+                }
+                L.push('');
+                L.push('---');
+                L.push('');
+            }
+
+            answers.forEach((a, i) => {
+                if (!single) {
+                    const t = this.ansTitle(a);
+                    L.push('### ' + (startNum + i) + '. ' + t);
+                }
+                L.push('');
+                L.push(this.metaBlock(a.created_time, a.updated_time, a.voteup_count, a.comment_count, this.ansUrl(a)));
+                L.push('');
+                L.push(this.html2md(a.content || '*（内容为空）*'));
+                L.push('');
+                L.push('---');
+                L.push('');
+            });
+
+            L.push('> 本文档由知乎内容导出工具自动生成');
+            return L.join('\n');
+        },
+
+        /** 答主文章批次 */
+        genPersonArticleBatchMarkdown: function(authorName, userInfo, articles, batchIdx, startNum, endNum) {
+            const L = [];
+            const now = new Date().toLocaleString('zh-CN');
+            const single = articles.length === 1;
+            const first = articles[0];
+            const firstDate = first ? this.formatDate(first.created) : '未知';
+
+            if (CONFIG.addFrontmatter) {
+                L.push('---');
+                if (single) {
+                    L.push('title: "' + this.ey(first.title || '无标题') + '"');
+                    L.push('author: "' + this.ey(authorName) + '"');
+                    L.push('source: ' + this.artUrl(first));
+                    L.push('created_date: "' + firstDate + '"');
+                    if (first.updated) L.push('updated_date: "' + this.formatDate(first.updated) + '"');
+                } else {
+                    L.push('title: "' + this.ey(authorName) + ' - 文章 (' + startNum + '-' + endNum + ')"');
+                    L.push('author: "' + this.ey(authorName) + '"');
+                    L.push('source: https://www.zhihu.com/people/' + this.urlToken);
+                    L.push('batch: ' + (batchIdx + 1));
+                    L.push('range: "' + startNum + '-' + endNum + '"');
+                    L.push('first_date: "' + firstDate + '"');
+                }
+                L.push('export_date: "' + now + '"');
+                L.push('type: 文章');
+                L.push('tags:');
+                L.push('  - 知乎导出');
+                L.push('  - "' + this.ey(authorName) + '"');
+                L.push('---');
+                L.push('');
+            }
+
+            if (single) {
+                L.push('# ' + (first.title || '无标题'));
+                L.push('');
+            } else {
+                L.push('# ' + authorName + ' · 文章 (' + startNum + '-' + endNum + ')');
+                L.push('');
+                if (CONFIG.useCallout) {
+                    L.push('> [!info] 批次信息');
+                    L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
+                    L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 篇');
+                    L.push('> **导出时间**：' + now);
+                } else {
+                    L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
+                    L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 篇');
+                }
+                L.push('');
+                L.push('---');
+                L.push('');
+            }
+
+            articles.forEach((a, i) => {
+                if (!single) {
+                    L.push('### ' + (startNum + i) + '. ' + (a.title || '无标题'));
+                }
+                L.push('');
+                L.push(this.metaBlock(a.created, a.updated, a.voteup_count, a.comment_count, this.artUrl(a)));
+                L.push('');
+                L.push(this.html2md(a.content || '*（内容为空）*'));
+                L.push('');
+                L.push('---');
+                L.push('');
+            });
+
+            L.push('> 本文档由知乎内容导出工具自动生成');
+            return L.join('\n');
+        },
+
+        /** 答主想法批次 */
+        genPersonPinBatchMarkdown: function(authorName, userInfo, pins, batchIdx, startNum, endNum) {
+            const L = [];
+            const now = new Date().toLocaleString('zh-CN');
+            const single = pins.length === 1;
+            const first = pins[0];
+            const firstDate = first ? this.formatDate(first.created) : '未知';
+
+            if (CONFIG.addFrontmatter) {
+                L.push('---');
+                if (single) {
+                    L.push('title: "' + this.ey(this.pinPreview(first)) + '"');
+                    L.push('author: "' + this.ey(authorName) + '"');
+                    L.push('created_date: "' + firstDate + '"');
+                } else {
+                    L.push('title: "' + this.ey(authorName) + ' - 想法 (' + startNum + '-' + endNum + ')"');
+                    L.push('author: "' + this.ey(authorName) + '"');
+                    L.push('source: https://www.zhihu.com/people/' + this.urlToken);
+                    L.push('batch: ' + (batchIdx + 1));
+                    L.push('range: "' + startNum + '-' + endNum + '"');
+                    L.push('first_date: "' + firstDate + '"');
+                }
+                L.push('export_date: "' + now + '"');
+                L.push('type: 想法');
+                L.push('tags:');
+                L.push('  - 知乎导出');
+                L.push('  - "' + this.ey(authorName) + '"');
+                L.push('---');
+                L.push('');
+            }
+
+            if (single) {
+                L.push('# ' + this.pinPreview(first));
+                L.push('');
+            } else {
+                L.push('# ' + authorName + ' · 想法 (' + startNum + '-' + endNum + ')');
+                L.push('');
+                if (CONFIG.useCallout) {
+                    L.push('> [!info] 批次信息');
+                    L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
+                    L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 条');
+                    L.push('> **导出时间**：' + now);
+                } else {
+                    L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
+                    L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 条');
+                }
+                L.push('');
+                L.push('---');
+                L.push('');
+            }
+
+            pins.forEach((p, i) => {
+                if (!single) L.push('### ' + (startNum + i) + '. ' + this.pinPreview(p));
+                L.push('');
+                const d = p.created ? new Date(p.created * 1000).toLocaleDateString('zh-CN') : '未知';
+                const likes = p.like_count || p.reaction_count || 0;
+                const comments = p.comment_count || 0;
+                if (CONFIG.useCallout) {
+                    L.push('> [!note]- 元信息');
+                    L.push('> 📅 ' + d + ' · ❤️ ' + likes + ' · 💬 ' + comments);
+                } else {
+                    L.push('> 📅 ' + d + ' | ❤️ ' + likes + ' | 💬 ' + comments);
+                }
+                L.push('');
+                L.push(this.pinContent(p));
+                L.push('');
+                L.push('---');
+                L.push('');
+            });
+
+            L.push('> 本文档由知乎内容导出工具自动生成');
+            return L.join('\n');
+        },
+
+        /** 问题回答批次 */
+        genQuestionAnswerBatchMarkdown: function(qInfo, answers, batchIdx, startNum, endNum, includeDetail, sortBy) {
+            const L = [];
+            const now = new Date().toLocaleString('zh-CN');
+            const qTitle = qInfo.title || '未知问题';
+            const qUrl = 'https://www.zhihu.com/question/' + this.questionId;
+            const sortLabel = sortBy === 'created' ? '按时间' : '按热度';
+            const firstDate = answers.length > 0 ? this.formatDate(answers[0].created_time) : '未知';
+
+            if (CONFIG.addFrontmatter) {
+                L.push('---');
+                L.push('title: "' + this.ey(qTitle) + ' - 回答 (' + startNum + '-' + endNum + ')"');
+                L.push('source: ' + qUrl);
+                L.push('export_date: "' + now + '"');
+                L.push('type: 回答');
+                L.push('batch: ' + (batchIdx + 1));
+                L.push('range: "' + startNum + '-' + endNum + '"');
+                L.push('first_date: "' + firstDate + '"');
+                L.push('sort_by: ' + sortBy);
+                L.push('tags: [知乎导出, 知乎问题]');
+                L.push('---');
+                L.push('');
+            }
+
+            L.push('# ' + qTitle + ' · 回答 (' + startNum + '-' + endNum + ')');
+            L.push('');
+
+            if (CONFIG.useCallout) {
+                L.push('> [!info] 批次信息');
+                L.push('> **问题链接**：[' + qTitle + '](' + qUrl + ')');
+                L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 个回答');
+                L.push('> **排序方式**：' + sortLabel);
+                L.push('> **导出时间**：' + now);
+            } else {
+                L.push('> **问题链接**：[' + qTitle + '](' + qUrl + ')');
+                L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 个回答');
+                L.push('> **排序**：' + sortLabel + ' | **导出时间**：' + now);
+            }
+            L.push('');
+
+            // 第一批包含问题描述
+            if (batchIdx === 0 && includeDetail && qInfo.detail) {
+                L.push('## 📃 问题描述');
+                L.push('');
+                L.push(this.html2md(qInfo.detail));
+                L.push('');
+                L.push('---');
+                L.push('');
+            }
+
+            L.push('## 📝 回答');
+            L.push('');
+
+            answers.forEach((a, i) => {
+                const authorName = (a.author && a.author.name) ? a.author.name : '匿名用户';
+                const authorToken = (a.author && a.author.url_token) ? a.author.url_token : '';
+                const authorHeadline = (a.author && a.author.headline) ? a.author.headline : '';
+                const heading = '回答 ' + (startNum + i) + ' · ' + authorName;
+                const date = a.created_time ? new Date(a.created_time * 1000).toLocaleDateString('zh-CN') : '未知';
+                const updateDate = a.updated_time ? new Date(a.updated_time * 1000).toLocaleDateString('zh-CN') : null;
+                const votes = a.voteup_count != null ? a.voteup_count : '-';
+                const comments = a.comment_count != null ? a.comment_count : '-';
+                const answerUrl = a.id
+                    ? 'https://www.zhihu.com/question/' + this.questionId + '/answer/' + a.id
+                    : '';
+                const authorUrl = authorToken ? 'https://www.zhihu.com/people/' + authorToken : '';
+
+                L.push('### ' + heading);
+                L.push('');
+
+                if (CONFIG.useCallout) {
+                    L.push('> [!note]- 回答信息');
+                    if (authorUrl) {
+                        L.push('> **答主**：[' + authorName + '](' + authorUrl + ')');
+                    } else {
+                        L.push('> **答主**：' + authorName);
+                    }
+                    if (authorHeadline) L.push('> **简介**：' + authorHeadline);
+                    L.push('> 📅 创建：' + date + (updateDate ? ' · 更新：' + updateDate : ''));
+                    L.push('> 👍 赞同：' + votes + ' · 💬 评论：' + comments);
+                    if (answerUrl) L.push('> 🔗 [查看原文](' + answerUrl + ')');
+                } else {
+                    let meta = '> ';
+                    if (authorUrl) meta += '**[' + authorName + '](' + authorUrl + ')**';
+                    else meta += '**' + authorName + '**';
+                    if (authorHeadline) meta += ' · ' + authorHeadline;
+                    L.push(meta);
+                    let meta2 = '> 📅 ' + date;
+                    if (updateDate) meta2 += '（更新: ' + updateDate + '）';
+                    meta2 += ' | 👍 ' + votes + ' | 💬 ' + comments;
+                    if (answerUrl) meta2 += ' | [原文](' + answerUrl + ')';
+                    L.push(meta2);
+                }
+                L.push('');
+
+                L.push(this.html2md(a.content || '*（内容为空）*'));
+                L.push('');
+                L.push('---');
+                L.push('');
+            });
+
+            L.push('> 本文档由知乎内容导出工具自动生成');
+            return L.join('\n');
+        },
+
+        // ==================== 答主页 Markdown 生成（完整合集，备用） ====================
         genPersonMarkdown: function(authorName, userInfo, answers, articles, pins) {
             const L = [];
             const now = new Date().toLocaleString('zh-CN');
@@ -824,14 +1876,17 @@
         },
 
         ansUrl: function(a) {
-            if (a.url) return a.url.startsWith('http') ? a.url : 'https://www.zhihu.com' + a.url;
-            if (a.question && a.question.id && a.id) return 'https://www.zhihu.com/question/' + a.question.id + '/answer/' + a.id;
+            if (a.question && a.question.id && a.id)
+                return 'https://www.zhihu.com/question/' + a.question.id + '/answer/' + a.id;
+            if (a.url && !a.url.includes('/api/'))
+                return a.url.startsWith('http') ? a.url : 'https://www.zhihu.com' + a.url;
             return '';
         },
 
         artUrl: function(a) {
-            if (a.url) return a.url.startsWith('http') ? a.url : 'https://zhuanlan.zhihu.com' + a.url;
             if (a.id) return 'https://zhuanlan.zhihu.com/p/' + a.id;
+            if (a.url && !a.url.includes('/api/'))
+                return a.url.startsWith('http') ? a.url : 'https://zhuanlan.zhihu.com' + a.url;
             return '';
         },
 
