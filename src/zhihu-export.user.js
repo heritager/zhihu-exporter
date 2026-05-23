@@ -270,7 +270,7 @@
             const granSel = document.createElement('select');
             granSel.id = 'exp-gran';
             Object.assign(granSel.style, { flex: '1', padding: '4px 4px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '12px', color: '#666' });
-            ['每天','每周','每月','全部'].forEach(opt => { const o = document.createElement('option'); o.value = opt; o.textContent = opt; granSel.appendChild(o); });
+            ['每天','每周','每月','全部','每个单独文件'].forEach(opt => { const o = document.createElement('option'); o.value = opt; o.textContent = opt; granSel.appendChild(o); });
             dateSelectRow.appendChild(granSel);
             modeDateSection.appendChild(dateSelectRow);
             panel.appendChild(modeDateSection);
@@ -310,7 +310,7 @@
             const offsetSaveSel = document.createElement('select');
             offsetSaveSel.id = 'exp-offset-save';
             Object.assign(offsetSaveSel.style, { flex: '1', padding: '4px 4px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '12px', color: '#666' });
-            ['每批一个文件','合并为一个文件'].forEach(opt => { const o = document.createElement('option'); o.value = opt; o.textContent = opt; offsetSaveSel.appendChild(o); });
+            ['每批一个文件','合并为一个文件','每个单独文件'].forEach(opt => { const o = document.createElement('option'); o.value = opt; o.textContent = opt; offsetSaveSel.appendChild(o); });
             offsetSaveRow.appendChild(offsetSaveLbl);
             offsetSaveRow.appendChild(offsetSaveSel);
             modeOffsetSection.appendChild(offsetSaveRow);
@@ -321,7 +321,14 @@
             modeOffsetSection.appendChild(offsetHint);
             panel.appendChild(modeOffsetSection);
 
-            setModeUI('date');
+            // 问题页不支持按日期导出，隐藏日期 Tab 并固定为偏移模式
+            if (this.mode === 'question') {
+                modeTabs.style.display = 'none';
+                modeDateSection.style.display = 'none';
+                modeOffsetSection.style.display = 'block';
+            } else {
+                setModeUI('date');
+            }
 
             // ---- 进度区 ----
             const progressDiv = document.createElement('div');
@@ -453,6 +460,7 @@
             const maxItems = parseInt(document.getElementById('exp-max')?.value) || 0;
             const offsetSaveMode = document.getElementById('exp-offset-save')?.value || '每批一个文件';
             const mergeMode = offsetSaveMode === '合并为一个文件';
+            const singleMode = offsetSaveMode === '每个单独文件';
             const mergedAnswers = [], mergedArticles = [], mergedPins = [];
 
             if (!expAnswers && !expArticles && !expPins) {
@@ -512,6 +520,7 @@
                         },
                         (batch, batchIdx) => {
                             if (mergeMode) { mergedAnswers.push(...batch); return; }
+                            if (singleMode) { this.downloadSingleItems(batch, '回答', authorName, userInfo); return; }
                             const firstDate = batch.length > 0 ? this.formatDate(batch[0].created_time) : '未知';
                             const startNum = startOffset + batchIdx * batchLimit + 1;
                             const endNum = startNum + batch.length - 1;
@@ -550,6 +559,7 @@
                         },
                         (batch, batchIdx) => {
                             if (mergeMode) { mergedArticles.push(...batch); return; }
+                            if (singleMode) { this.downloadSingleItems(batch, '文章', authorName, userInfo); return; }
                             const firstDate = batch.length > 0 ? this.formatDate(batch[0].created) : '未知';
                             const startNum = startOffset + batchIdx * batchLimit + 1;
                             const endNum = startNum + batch.length - 1;
@@ -587,6 +597,7 @@
                         },
                         (batch, batchIdx) => {
                             if (mergeMode) { mergedPins.push(...batch); return; }
+                            if (singleMode) { this.downloadSingleItems(batch, '想法', authorName, userInfo); return; }
                             const firstDate = batch.length > 0 ? this.formatDate(batch[0].created) : '未知';
                             const startNum = startOffset + batchIdx * batchLimit + 1;
                             const endNum = startNum + batch.length - 1;
@@ -614,6 +625,7 @@
                             fo.baseUrl, fo.params, [{ offset: fo.offset, limit: fo.limit }],
                             null,
                             mergeMode ? null : (batch) => {
+                                if (singleMode) { this.downloadSingleItems(batch, fo.type, authorName, userInfo); return; }
                                 const firstDate = batch.length > 0 ? this.formatDate(batch[0].created_time || batch[0].created) : '未知';
                                 const md = fo.type === '回答'
                                     ? this.genPersonAnswerBatchMarkdown(authorName, userInfo, batch, -1, fo.offset + 1, fo.offset + batch.length)
@@ -745,10 +757,12 @@
                     const retryResult = await this.retryFailedBatches(
                         answerBase, answerParams, result.failedOffsets,
                         null,
-                        (batch) => {
+                        (batch, _idx, retryOffset) => {
                             const firstDate = batch.length > 0 ? this.formatDate(batch[0].created_time) : '未知';
-                            const md = this.genQuestionAnswerBatchMarkdown(qInfo, batch, -1, 0, batch.length, includeDetail, sortBy);
-                            const filename = this.safeFilename(qTitle + '_回答_补_' + firstDate + '_' + batch.length);
+                            const startNum = (retryOffset != null ? retryOffset : 0) + 1;
+                            const endNum = startNum + batch.length - 1;
+                            const md = this.genQuestionAnswerBatchMarkdown(qInfo, batch, -1, startNum, endNum, includeDetail, sortBy);
+                            const filename = this.safeFilename(qTitle + '_回答_补_' + firstDate + '_' + startNum + '-' + endNum);
                             this.downloadFile(md, filename);
                         }
                     );
@@ -791,8 +805,8 @@
                 let batchData = null;
                 let success = false;
 
-                // ---- 最多重试 maxRetries 次（429 限流不占用重试次数） ----
-                let attempt = 0;
+                // ---- 最多重试 maxRetries 次（429 限流最多额外等待 5 次） ----
+                let attempt = 0, rateLimitCount = 0;
                 while (attempt <= CONFIG.maxRetries) {
                     try {
                         const urlParams = new URLSearchParams({ ...params, offset: String(offset), limit: String(limit) });
@@ -800,9 +814,10 @@
 
                         if (!resp.ok) {
                             if (resp.status === 429) {
-                                console.warn('限流，等待 5 秒...');
+                                if (++rateLimitCount > 5) throw new Error('限流超过 5 次，放弃本批次');
+                                console.warn('限流(' + rateLimitCount + '/5)，等待 5 秒...');
                                 await new Promise(r => setTimeout(r, 5000));
-                                continue; // 限流不占用重试次数，不递增 attempt
+                                continue;
                             }
                             throw new Error('HTTP ' + resp.status);
                         }
@@ -875,7 +890,7 @@
                 let batchData = null;
                 let success = false;
 
-                let attempt = 0;
+                let attempt = 0, rateLimitCount = 0;
                 while (attempt <= CONFIG.maxRetries) {
                     try {
                         const urlParams = new URLSearchParams({ ...params, offset: String(fo.offset), limit: String(fo.limit) });
@@ -883,8 +898,9 @@
 
                         if (!resp.ok) {
                             if (resp.status === 429) {
+                                if (++rateLimitCount > 5) throw new Error('重试限流超过 5 次');
                                 await new Promise(r => setTimeout(r, 5000));
-                                continue; // 限流不占用重试次数
+                                continue;
                             }
                             throw new Error('HTTP ' + resp.status);
                         }
@@ -998,6 +1014,7 @@
                 if (expPins)     types.push({ type: '想法', endpoint: 'pins',     timeKey: 'created',       params: { limit: 20, sort_by: 'created' } });
 
                 const allItems = []; // { type, items[] }
+                const dateFailedOffsets = [];  // 收集日期导出中的失败 offset
 
                 for (let ti = 0; ti < types.length; ti++) {
                     if (this.aborted) break;
@@ -1023,7 +1040,7 @@
                     const result = await this.fetchAllPaged(
                         baseUrl, t.params,
                         (c) => {
-                            this.setProgress(15 + ti * 25 + Math.min(c / Math.max(estCount, 1) * 10, 10).toFixed(1),
+                            this.setProgress((15 + ti * 25 + Math.min(c / Math.max(estCount, 1) * 10, 10)).toFixed(1),
                                 '正在下载「' + t.type + '」', c + ' / ' + estCount);
                         },
                         null,  // 不分批输出，最后统一按日期分组
@@ -1034,13 +1051,57 @@
                     if (result.items.length > 0) {
                         allItems.push({ type: t.type, timeKey: t.timeKey, items: result.items });
                     }
+                    // 记录失败 offset 供末尾重试
+                    if (result.failedOffsets.length > 0) {
+                        result.failedOffsets.forEach(fo => dateFailedOffsets.push({ type: t.type, baseUrl, params: t.params, offset: fo.offset, limit: fo.limit }));
+                    }
                     const key = t.type === '回答' ? 'answers' : t.type === '文章' ? 'articles' : 'pins';
                     this.stats[key] = result.items.length;
                 }
 
                 if (this.aborted) { this.setProgress(0, '导出已取消', ''); this.resetUI(2000); return; }
 
+                // ---- 日期导出：重试失败批次 ----
+                if (dateFailedOffsets.length > 0 && !this.aborted) {
+                    this.setProgress(88, '正在重试失败的批次...', dateFailedOffsets.length + ' 个');
+                    for (const fo of dateFailedOffsets) {
+                        if (this.aborted) break;
+                        const retry = await this.retryFailedBatches(
+                            fo.baseUrl, fo.params, [{ offset: fo.offset, limit: fo.limit }],
+                            null, null  // 日期模式下重试不单独输出文件，追加到 allItems
+                        );
+                        if (retry.items.length > 0) {
+                            // 把重试恢复的条目追加到对应类型的 allItems 中
+                            let ct = allItems.find(x => x.type === fo.type);
+                            if (!ct) { ct = { type: fo.type, timeKey: fo.type === '回答' ? 'created_time' : 'created', items: [] }; allItems.push(ct); }
+                            ct.items.push(...retry.items);
+                            const key = fo.type === '回答' ? 'answers' : fo.type === '文章' ? 'articles' : 'pins';
+                            this.stats[key] += retry.items.length;
+                        }
+                        if (retry.stillFailed.length > 0) {
+                            console.warn('日期导出重试最终失败:', fo.type, fo.offset);
+                        }
+                    }
+                }
+
                 // ---- 按粒度分组并输出文件 ----
+                if (granularity === '每个单独文件') {
+                    this.setProgress(90, '正在生成独立文件...', '');
+                    let fileCount = 0;
+                    for (const ct of allItems) {
+                        for (const item of ct.items) {
+                            if (this.aborted) break;
+                            this.downloadSingleItems([item], ct.type, authorName, userInfo);
+                            fileCount++;
+                        }
+                    }
+                    const totalItems = allItems.reduce((s, ct) => s + ct.items.length, 0);
+                    this.setProgress(100, '导出完成',
+                        '回答:' + this.stats.answers + ' 文章:' + this.stats.articles + ' 想法:' + this.stats.pins +
+                        ' | 文件数:' + fileCount);
+                    return;
+                }
+
                 this.setProgress(90, '正在按日期分组生成文件...', '');
                 const getItemDate = (item, timeKey) => {
                     const ts = item[timeKey];
@@ -1133,47 +1194,84 @@
             return name.replace(/[\\\/:*?"<>|]/g, '_').replace(/\s+/g, '_').substring(0, 200);
         },
 
+        // 每个内容单独导出为一个文件
+        downloadSingleItems: function(batch, type, authorName, userInfo) {
+            for (const item of batch) {
+                const ts = item.created_time || item.created;
+                const date = ts ? this.formatDate(ts) : '未知';
+                let title = type === '回答' ? this.ansTitle(item) :
+                            type === '文章' ? (item.title || '无标题') :
+                            this.pinPreview(item);
+                const safeTitle = title.replace(/[\\\/:*?"<>|]/g, '_').replace(/\s+/g, '_').substring(0, 60);
+                const filename = this.safeFilename(authorName + '_' + type + '_' + date + '_' + safeTitle);
+                let md;
+                if (type === '回答') md = this.genPersonAnswerBatchMarkdown(authorName, userInfo, [item], 0, 1, 1);
+                else if (type === '文章') md = this.genPersonArticleBatchMarkdown(authorName, userInfo, [item], 0, 1, 1);
+                else md = this.genPersonPinBatchMarkdown(authorName, userInfo, [item], 0, 1, 1);
+                this.downloadFile(md, filename);
+            }
+        },
+
         // ==================== 分批 Markdown 生成 ====================
 
         /** 答主回答批次 */
         genPersonAnswerBatchMarkdown: function(authorName, userInfo, answers, batchIdx, startNum, endNum) {
             const L = [];
             const now = new Date().toLocaleString('zh-CN');
-            const firstDate = answers.length > 0 ? this.formatDate(answers[0].created_time) : '未知';
+            const single = answers.length === 1;
+            const first = answers[0];
+            const firstDate = first ? this.formatDate(first.created_time) : '未知';
 
             if (CONFIG.addFrontmatter) {
                 L.push('---');
-                L.push('title: "' + this.ey(authorName) + ' - 回答 (' + startNum + '-' + endNum + ')"');
-                L.push('author: "' + this.ey(authorName) + '"');
-                L.push('source: https://www.zhihu.com/people/' + this.urlToken);
+                if (single) {
+                    L.push('title: "' + this.ey(this.ansTitle(first)) + '"');
+                    L.push('author: "' + this.ey(authorName) + '"');
+                    L.push('source: ' + this.ansUrl(first));
+                    L.push('created_date: "' + firstDate + '"');
+                    if (first.updated_time) L.push('updated_date: "' + this.formatDate(first.updated_time) + '"');
+                } else {
+                    L.push('title: "' + this.ey(authorName) + ' - 回答 (' + startNum + '-' + endNum + ')"');
+                    L.push('author: "' + this.ey(authorName) + '"');
+                    L.push('source: https://www.zhihu.com/people/' + this.urlToken);
+                    L.push('batch: ' + (batchIdx + 1));
+                    L.push('range: "' + startNum + '-' + endNum + '"');
+                    L.push('first_date: "' + firstDate + '"');
+                }
                 L.push('export_date: "' + now + '"');
                 L.push('type: 回答');
-                L.push('batch: ' + (batchIdx + 1));
-                L.push('range: "' + startNum + '-' + endNum + '"');
-                L.push('first_date: "' + firstDate + '"');
-                L.push('tags: [知乎导出, ' + authorName + ']');
+                L.push('tags:');
+                L.push('  - 知乎导出');
+                L.push('  - "' + this.ey(authorName) + '"');
                 L.push('---');
                 L.push('');
             }
 
-            L.push('# ' + authorName + ' · 回答 (' + startNum + '-' + endNum + ')');
-            L.push('');
-            if (CONFIG.useCallout) {
-                L.push('> [!info] 批次信息');
-                L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
-                L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 篇');
-                L.push('> **导出时间**：' + now);
+            if (single) {
+                L.push('# ' + this.ansTitle(first));
+                L.push('');
             } else {
-                L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
-                L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 篇');
+                L.push('# ' + authorName + ' · 回答 (' + startNum + '-' + endNum + ')');
+                L.push('');
+                if (CONFIG.useCallout) {
+                    L.push('> [!info] 批次信息');
+                    L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
+                    L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 篇');
+                    L.push('> **导出时间**：' + now);
+                } else {
+                    L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
+                    L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 篇');
+                }
+                L.push('');
+                L.push('---');
+                L.push('');
             }
-            L.push('');
-            L.push('---');
-            L.push('');
 
             answers.forEach((a, i) => {
-                const t = this.ansTitle(a);
-                L.push('### ' + (startNum + i) + '. ' + t);
+                if (!single) {
+                    const t = this.ansTitle(a);
+                    L.push('### ' + (startNum + i) + '. ' + t);
+                }
                 L.push('');
                 L.push(this.metaBlock(a.created_time, a.updated_time, a.voteup_count, a.comment_count, this.ansUrl(a)));
                 L.push('');
@@ -1183,7 +1281,7 @@
                 L.push('');
             });
 
-            L.push('> 本文档由知乎内容导出工具自动生成 · 第 ' + (batchIdx + 1) + ' 批');
+            L.push('> 本文档由知乎内容导出工具自动生成');
             return L.join('\n');
         },
 
@@ -1191,41 +1289,59 @@
         genPersonArticleBatchMarkdown: function(authorName, userInfo, articles, batchIdx, startNum, endNum) {
             const L = [];
             const now = new Date().toLocaleString('zh-CN');
-            const firstDate = articles.length > 0 ? this.formatDate(articles[0].created) : '未知';
+            const single = articles.length === 1;
+            const first = articles[0];
+            const firstDate = first ? this.formatDate(first.created) : '未知';
 
             if (CONFIG.addFrontmatter) {
                 L.push('---');
-                L.push('title: "' + this.ey(authorName) + ' - 文章 (' + startNum + '-' + endNum + ')"');
-                L.push('author: "' + this.ey(authorName) + '"');
-                L.push('source: https://www.zhihu.com/people/' + this.urlToken);
+                if (single) {
+                    L.push('title: "' + this.ey(first.title || '无标题') + '"');
+                    L.push('author: "' + this.ey(authorName) + '"');
+                    L.push('source: ' + this.artUrl(first));
+                    L.push('created_date: "' + firstDate + '"');
+                    if (first.updated) L.push('updated_date: "' + this.formatDate(first.updated) + '"');
+                } else {
+                    L.push('title: "' + this.ey(authorName) + ' - 文章 (' + startNum + '-' + endNum + ')"');
+                    L.push('author: "' + this.ey(authorName) + '"');
+                    L.push('source: https://www.zhihu.com/people/' + this.urlToken);
+                    L.push('batch: ' + (batchIdx + 1));
+                    L.push('range: "' + startNum + '-' + endNum + '"');
+                    L.push('first_date: "' + firstDate + '"');
+                }
                 L.push('export_date: "' + now + '"');
                 L.push('type: 文章');
-                L.push('batch: ' + (batchIdx + 1));
-                L.push('range: "' + startNum + '-' + endNum + '"');
-                L.push('first_date: "' + firstDate + '"');
-                L.push('tags: [知乎导出, ' + authorName + ']');
+                L.push('tags:');
+                L.push('  - 知乎导出');
+                L.push('  - "' + this.ey(authorName) + '"');
                 L.push('---');
                 L.push('');
             }
 
-            L.push('# ' + authorName + ' · 文章 (' + startNum + '-' + endNum + ')');
-            L.push('');
-            if (CONFIG.useCallout) {
-                L.push('> [!info] 批次信息');
-                L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
-                L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 篇');
-                L.push('> **导出时间**：' + now);
+            if (single) {
+                L.push('# ' + (first.title || '无标题'));
+                L.push('');
             } else {
-                L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
-                L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 篇');
+                L.push('# ' + authorName + ' · 文章 (' + startNum + '-' + endNum + ')');
+                L.push('');
+                if (CONFIG.useCallout) {
+                    L.push('> [!info] 批次信息');
+                    L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
+                    L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 篇');
+                    L.push('> **导出时间**：' + now);
+                } else {
+                    L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
+                    L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 篇');
+                }
+                L.push('');
+                L.push('---');
+                L.push('');
             }
-            L.push('');
-            L.push('---');
-            L.push('');
 
             articles.forEach((a, i) => {
-                const t = a.title || '无标题';
-                L.push('### ' + (startNum + i) + '. ' + t);
+                if (!single) {
+                    L.push('### ' + (startNum + i) + '. ' + (a.title || '无标题'));
+                }
                 L.push('');
                 L.push(this.metaBlock(a.created, a.updated, a.voteup_count, a.comment_count, this.artUrl(a)));
                 L.push('');
@@ -1235,7 +1351,7 @@
                 L.push('');
             });
 
-            L.push('> 本文档由知乎内容导出工具自动生成 · 第 ' + (batchIdx + 1) + ' 批');
+            L.push('> 本文档由知乎内容导出工具自动生成');
             return L.join('\n');
         },
 
@@ -1243,40 +1359,55 @@
         genPersonPinBatchMarkdown: function(authorName, userInfo, pins, batchIdx, startNum, endNum) {
             const L = [];
             const now = new Date().toLocaleString('zh-CN');
-            const firstDate = pins.length > 0 ? this.formatDate(pins[0].created) : '未知';
+            const single = pins.length === 1;
+            const first = pins[0];
+            const firstDate = first ? this.formatDate(first.created) : '未知';
 
             if (CONFIG.addFrontmatter) {
                 L.push('---');
-                L.push('title: "' + this.ey(authorName) + ' - 想法 (' + startNum + '-' + endNum + ')"');
-                L.push('author: "' + this.ey(authorName) + '"');
-                L.push('source: https://www.zhihu.com/people/' + this.urlToken);
+                if (single) {
+                    L.push('title: "' + this.ey(this.pinPreview(first)) + '"');
+                    L.push('author: "' + this.ey(authorName) + '"');
+                    L.push('created_date: "' + firstDate + '"');
+                } else {
+                    L.push('title: "' + this.ey(authorName) + ' - 想法 (' + startNum + '-' + endNum + ')"');
+                    L.push('author: "' + this.ey(authorName) + '"');
+                    L.push('source: https://www.zhihu.com/people/' + this.urlToken);
+                    L.push('batch: ' + (batchIdx + 1));
+                    L.push('range: "' + startNum + '-' + endNum + '"');
+                    L.push('first_date: "' + firstDate + '"');
+                }
                 L.push('export_date: "' + now + '"');
                 L.push('type: 想法');
-                L.push('batch: ' + (batchIdx + 1));
-                L.push('range: "' + startNum + '-' + endNum + '"');
-                L.push('first_date: "' + firstDate + '"');
-                L.push('tags: [知乎导出, ' + authorName + ']');
+                L.push('tags:');
+                L.push('  - 知乎导出');
+                L.push('  - "' + this.ey(authorName) + '"');
                 L.push('---');
                 L.push('');
             }
 
-            L.push('# ' + authorName + ' · 想法 (' + startNum + '-' + endNum + ')');
-            L.push('');
-            if (CONFIG.useCallout) {
-                L.push('> [!info] 批次信息');
-                L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
-                L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 条');
-                L.push('> **导出时间**：' + now);
+            if (single) {
+                L.push('# ' + this.pinPreview(first));
+                L.push('');
             } else {
-                L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
-                L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 条');
+                L.push('# ' + authorName + ' · 想法 (' + startNum + '-' + endNum + ')');
+                L.push('');
+                if (CONFIG.useCallout) {
+                    L.push('> [!info] 批次信息');
+                    L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
+                    L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 条');
+                    L.push('> **导出时间**：' + now);
+                } else {
+                    L.push('> **作者**：[' + authorName + '](https://www.zhihu.com/people/' + this.urlToken + ')');
+                    L.push('> **批次**：第 ' + (batchIdx + 1) + ' 批 | **范围**：第 ' + startNum + ' - ' + endNum + ' 条');
+                }
+                L.push('');
+                L.push('---');
+                L.push('');
             }
-            L.push('');
-            L.push('---');
-            L.push('');
 
             pins.forEach((p, i) => {
-                L.push('### ' + (startNum + i) + '. ' + this.pinPreview(p));
+                if (!single) L.push('### ' + (startNum + i) + '. ' + this.pinPreview(p));
                 L.push('');
                 const d = p.created ? new Date(p.created * 1000).toLocaleDateString('zh-CN') : '未知';
                 const likes = p.like_count || p.reaction_count || 0;
@@ -1294,7 +1425,7 @@
                 L.push('');
             });
 
-            L.push('> 本文档由知乎内容导出工具自动生成 · 第 ' + (batchIdx + 1) + ' 批');
+            L.push('> 本文档由知乎内容导出工具自动生成');
             return L.join('\n');
         },
 
@@ -1399,7 +1530,7 @@
                 L.push('');
             });
 
-            L.push('> 本文档由知乎内容导出工具自动生成 · 第 ' + (batchIdx + 1) + ' 批');
+            L.push('> 本文档由知乎内容导出工具自动生成');
             return L.join('\n');
         },
 
@@ -1745,14 +1876,17 @@
         },
 
         ansUrl: function(a) {
-            if (a.url) return a.url.startsWith('http') ? a.url : 'https://www.zhihu.com' + a.url;
-            if (a.question && a.question.id && a.id) return 'https://www.zhihu.com/question/' + a.question.id + '/answer/' + a.id;
+            if (a.question && a.question.id && a.id)
+                return 'https://www.zhihu.com/question/' + a.question.id + '/answer/' + a.id;
+            if (a.url && !a.url.includes('/api/'))
+                return a.url.startsWith('http') ? a.url : 'https://www.zhihu.com' + a.url;
             return '';
         },
 
         artUrl: function(a) {
-            if (a.url) return a.url.startsWith('http') ? a.url : 'https://zhuanlan.zhihu.com' + a.url;
             if (a.id) return 'https://zhuanlan.zhihu.com/p/' + a.id;
+            if (a.url && !a.url.includes('/api/'))
+                return a.url.startsWith('http') ? a.url : 'https://zhuanlan.zhihu.com' + a.url;
             return '';
         },
 
