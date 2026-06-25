@@ -959,12 +959,21 @@
             let offset = 0;
             const limit = params.limit || 20;
             let count = 0;
+            let nextUrl = '';
+            const seenPages = new Set();
+            const seenItems = new Set();
 
             while (true) {
                 if (this.aborted) break;
 
                 const urlParams = new URLSearchParams({ ...params, offset: String(offset), limit: String(limit) });
-                const requestUrl = baseUrl + '?' + urlParams.toString();
+                const requestUrl = nextUrl || (baseUrl + '?' + urlParams.toString());
+                if (seenPages.has(requestUrl)) {
+                    this.addRunWarning('检测到分页循环，已停止继续请求');
+                    break;
+                }
+                seenPages.add(requestUrl);
+
                 const data = await this.requestJsonWithRetry(requestUrl, {
                     label: '分页请求',
                     offset: offset
@@ -972,16 +981,29 @@
                 if (!data.data || data.data.length === 0) break;
 
                 for (const item of data.data) {
+                    const itemKey = this.pagedItemKey(baseUrl, item);
+                    if (itemKey && seenItems.has(itemKey)) continue;
+                    if (itemKey) seenItems.add(itemKey);
                     allItems.push(item);
                     count++;
                     if (onItem) onItem(count);
                 }
 
                 if (data.paging && data.paging.is_end) break;
+                nextUrl = data.paging && data.paging.next ? data.paging.next : '';
                 offset += limit;
                 await this.delay(CONFIG.requestDelay);
             }
             return allItems;
+        },
+
+        pagedItemKey: function(baseUrl, item) {
+            if (!item) return '';
+            const type = baseUrl || 'paged';
+            if (item.id != null) return type + ':id:' + item.id;
+            if (item.url) return type + ':url:' + item.url;
+            if (item.url_token) return type + ':token:' + item.url_token;
+            return '';
         },
 
         requestJsonWithRetry: async function(url, options) {
