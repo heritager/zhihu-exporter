@@ -2706,7 +2706,15 @@
                 }
             }
 
-            return walk(div).trim().replace(/\n{3,}/g, '\n\n');
+            return this.cleanMarkdownOutput(walk(div));
+        },
+
+        cleanMarkdownOutput: function(markdown) {
+            return String(markdown || '')
+                .replace(/^\*?"\s*data-size=.*\*?$/gm, '')
+                .replace(/(\]\([^)]+\))(#{4,6}\s)/g, '$1\n\n$2')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
         },
 
         convertTable: function(tbl) {
