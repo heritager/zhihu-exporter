@@ -771,7 +771,14 @@
                     const items = await this.fetchAllPaged(
                         this.memberApiUrl(this.urlToken, '/answers'),
                         { include: 'data[*].content,voteup_count,created_time,updated_time,comment_count,question.id,question.title', limit: 20, sort_by: 'created' },
-                        (c) => { processed++; this.setProgress(this.calcFetchProgress(processed, totalTasks), '正在导出回答...', c+' / '+total); }
+                        (c) => {
+                            processed++;
+                            this.setProgress(
+                                this.calcFetchProgress(processed, Math.max(totalTasks, processed)),
+                                '正在导出回答...',
+                                this.formatFetchCount(c, total)
+                            );
+                        }
                     );
                     allAnswers.push(...items);
                     this.stats.answers = allAnswers.length;
@@ -784,7 +791,14 @@
                     const items = await this.fetchAllPaged(
                         this.memberApiUrl(this.urlToken, '/articles'),
                         { include: 'data[*].content,voteup_count,created,updated,comment_count,title', limit: 20, sort_by: 'created' },
-                        (c) => { processed++; this.setProgress(this.calcFetchProgress(processed, totalTasks), '正在导出文章...', c+' / '+total); }
+                        (c) => {
+                            processed++;
+                            this.setProgress(
+                                this.calcFetchProgress(processed, Math.max(totalTasks, processed)),
+                                '正在导出文章...',
+                                this.formatFetchCount(c, total)
+                            );
+                        }
                     );
                     allArticles.push(...items);
                     this.stats.articles = allArticles.length;
@@ -797,7 +811,14 @@
                     const items = await this.fetchAllPaged(
                         this.memberApiUrl(this.urlToken, '/pins'),
                         { limit: 20 },
-                        (c) => { processed++; this.setProgress(this.calcFetchProgress(processed, totalTasks), '正在导出想法...', c+' / '+total); }
+                        (c) => {
+                            processed++;
+                            this.setProgress(
+                                this.calcFetchProgress(processed, Math.max(totalTasks, processed)),
+                                '正在导出想法...',
+                                this.formatFetchCount(c, total)
+                            );
+                        }
                     );
                     allPins.push(...items);
                     this.stats.pins = allPins.length;
@@ -2263,6 +2284,13 @@
         calcFetchProgress: function(processed, total) {
             if (!total || total <= 0) return '50';
             return Math.min((processed / total) * 95, 95).toFixed(1);
+        },
+
+        formatFetchCount: function(count, total) {
+            const numericTotal = Number(total);
+            if (!Number.isFinite(numericTotal) || numericTotal <= 0) return String(count);
+            const label = count > numericTotal ? ('约 ' + numericTotal) : String(numericTotal);
+            return count + ' / ' + label;
         },
 
         compareByCreatedDesc: function(a, b) {
